@@ -118,22 +118,30 @@ def build_affix(ctx):
     for entry_id, e in _entries(ctx, "affix"):
         row = _base(e, ctx.name(["mmorpg.affix." + entry_id], entry_id))
         row["stats"] = stat_list(e.get("stats"))
-        tags, excl, req_all = [], [], False
+        reqs, tags, excl = [], [], []
+        # Requirements.satisfiesAllRequirements is an AND over the list, while
+        # each TagRequirement is its own INCLUDES_ANY / HAS_ALL test - keep them
+        # separate so the gear match stays right if a pack ever ships two.
         for req in (e.get("requirements") or {}).get("tag_requirements") or []:
-            if req.get("req_type") == "HAS_ALL":
-                req_all = True
-            for t in req.get("included") or []:
+            inc = [t for t in (req.get("included") or []) if t]
+            exc = [t for t in (req.get("excluded") or []) if t]
+            if not inc and not exc:
+                continue
+            reqs.append({"all": req.get("req_type") == "HAS_ALL",
+                         "inc": inc, "exc": exc})
+            for t in inc:
                 if t not in tags:
                     tags.append(t)
-            for t in req.get("excluded") or []:
+            for t in exc:
                 if t not in excl:
                     excl.append(t)
+        row["reqs"] = reqs
         row["tags"] = tags
         if excl:
             row["excl"] = excl
         _facts(row, e, [("weight", "weight"), ("type", "type"),
                         ("eye_aura_req", "aura"), ("one_of_a_kind", "oneOfAKind")])
-        if req_all:
+        if any(r["all"] for r in reqs):
             row.setdefault("f", {})["reqAll"] = True
         row["filters"] = {"type": [e.get("type", "")], "slot": tags}
         rows.append(row)
@@ -422,6 +430,50 @@ def _stat_meta(entry):
     return meta
 
 
+def build_gear_types(ctx):
+    """The 43 BaseGearTypes, which two groups need and neither can derive.
+
+    A unique is a base item with unique stats bolted on: `plate_chest` is where
+    its Armor and Health come from, and the wiki builds the same preview stack
+    (BestiaryGroup.UNIQUE_GEAR -> GearBlueprint) rather than showing the unique
+    stats alone. The tag list is the other half - GroupFilterType.AFFIX_SLOTS
+    tests every affix against every gear type, which is why the same helmet
+    answers to `helmet`, `cloth` and `cloth_helmet` at once.
+    """
+    slots = ctx.reg.get("gear_slot") or {}
+    out = {}
+    for gid, g in sorted((ctx.reg.get("gear_type") or {}).items()):
+        if gid in regs.PLACEHOLDER_IDS:
+            continue
+        slot_id = g.get("gear_slot") or ""
+        slot = slots.get(slot_id) or {}
+        out[gid] = {
+            "name": ctx.name(["mmorpg.gear_type." + gid], gid),
+            "slot": slot_id,
+            "slotName": ctx.name(["mmorpg.gearslot." + slot_id], slot_id),
+            # SlotFamily: Armor / Weapon / Jewelry / OffHand
+            "family": slot.get("fam") or "",
+            "style": g.get("style") or "",
+            "tags": sorted((g.get("tags") or {}).get("tags") or []),
+            "baseStats": stat_list(g.get("base_stats")),
+        }
+    return out
+
+
+def gear_type_stats(balance):
+    """Stat ids only the gear bases mention, so they get meta like any other.
+
+    `weapon_damage` and `learn_bolt` appear in no affix, unique or gem, so
+    without this they miss fill_code_stats and render at NONE scaling - a
+    weapon's whole damage line, wrong by 20.8x at level 100.
+    """
+    out = set()
+    for gt in (balance.get("gearTypes") or {}).values():
+        for s in gt.get("baseStats") or []:
+            out.add(s["stat"])
+    return out
+
+
 def fill_code_stats(stats, referenced, code_stats):
     """Back-fill stats the datapack never serialises, from the Java scan.
 
@@ -491,7 +543,16 @@ def build_balance(ctx):
 
     rarities = {}
     for rid, r in (ctx.reg.get("gear_rarity") or {}).items():
-        pct = r.get("base_stat_percents") or {}
+        # A GearRarity carries two different windows and they are not
+        # interchangeable. `stat_percents` is the one a roll lands in - what
+        # SkillGemBlueprint gives a gem and what ISkillGem shows as its range,
+        # so it is what the wiki's rarity button narrows to. `base_stat_percents`
+        # is only ever read by BaseStatsData, for a gear's own base stats.
+        # Reading the second where the first belongs looks almost right and is
+        # not: every rarity's base window ends at 100, so picking Rare over
+        # Mythic would move the low end and leave the high end alone.
+        roll = r.get("stat_percents") or {}
+        base = r.get("base_stat_percents") or {}
         rarities[rid] = {
             # the lang key doubles the dot: "mmorpg.rarity..rare"
             "name": (clean(ctx.raw("mmorpg.rarity.." + rid))
@@ -499,10 +560,10 @@ def build_balance(ctx):
                      or title_case(rid)),
             "color": r.get("text_format") or r.get("color") or "WHITE",
             "tier": r.get("item_tier", 0),
-            # how much of a stat's min..max range this rarity can roll -
-            # what the wiki's rarity button narrows a gem's numbers to
-            "pctMin": pct.get("min", 0),
-            "pctMax": pct.get("max", 100),
+            "pctMin": roll.get("min", 0),
+            "pctMax": roll.get("max", 100),
+            "basePctMin": base.get("min", 0),
+            "basePctMax": base.get("max", 100),
             "unique": bool(r.get("is_unique_item")),
             "runeword": r.get("type") == "RUNEWORD" or rid == "runeword",
             "minAffixes": r.get("min_affixes", 0),
@@ -536,6 +597,7 @@ def build_balance(ctx):
 
     return {
         "maxLevel": balance.get("MAX_LEVEL", 100),
+        "gearTypes": build_gear_types(ctx),
         "curves": {
             "NORMAL": curve("NORMAL_STAT_SCALING"),
             "CORE": curve("CORE_STAT_SCALING"),

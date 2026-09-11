@@ -29,8 +29,9 @@ LANG_PREFIXES = (
     "mmorpg.support_gem.", "mmorpg.aura.", "mmorpg.effect.", "mmorpg.gui.",
     "mmorpg.item_tips.", "mmorpg.formatter.", "item.mmorpg.",
     "library_of_exile.item_modification.", "library_of_exile.item_requirement.",
-    "library_of_exile.currency.", "mmorpg.profession.", "mmorpg.gear_slot.",
+    "library_of_exile.currency.", "mmorpg.profession.", "mmorpg.gearslot.",
     "mmorpg.rarity.", "mmorpg.runeword.", "mmorpg.rune.", "mmorpg.gem.",
+    "mmorpg.gear_type.",
 )
 
 
@@ -206,8 +207,10 @@ def main(argv=None):
 
     balance = groupbuild.build_balance(ctx)
 
-    # back-fill the stats only Java defines, and say so if any are still unknown
+    # back-fill the stats only Java defines, and say so if any are still unknown.
+    # the gear bases are counted too - nothing else references weapon_damage
     referenced = groupbuild.referenced_stats(built.values())
+    referenced |= groupbuild.gear_type_stats(balance)
     from_datapack = len([s for s in referenced if s in balance["stats"]])
     unresolved = groupbuild.fill_code_stats(balance["stats"], referenced, code_stats)
     print(f"  stats          {len(referenced):5} referenced  "

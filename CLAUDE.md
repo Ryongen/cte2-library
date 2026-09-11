@@ -87,6 +87,55 @@ Two traps that generator already handles, so don't "simplify" them away:
 - Pack JSON is not always strict JSON (trailing commas); `sources.py` parses
   leniently, as Minecraft's GSON does.
 
+### A gear rarity has two percent windows and they are not the same one
+`GearRarity` carries both `stat_percents` and `base_stat_percents`, and they
+answer different questions:
+
+- **`stat_percents`** is where a roll lands. `SkillGemBlueprint` rolls a gem's
+  `perc` in it, and `ISkillGem.getAllStatsWithCtx` shows it as the range - so
+  it is what the wiki's rarity button narrows to. In this pack: rare 35-51,
+  mythic 86-100.
+- **`base_stat_percents`** is read by `BaseStatsData` alone, for a gear's own
+  base stats. Every rarity's is `x-100`.
+
+Reading the second where the first belongs looks almost right: the low end
+still moves per rarity, so the bug reads as "picking Rare only changed the
+minimum". Both are extracted; `pctMin/pctMax` is the roll window and
+`basePctMin/basePctMax` the base-stat one.
+
+### Unique gear is a base item, not a stat list
+`BestiaryGroup.UNIQUE_GEAR` builds a real `GearBlueprint`, so the wiki entry is
+a plate chest that happens to have unique stats - it shows the base item's
+Armor and Health above them. Those come from `mmorpg_base_gear_types`
+(`base_stats`), rolled inside the unique rarity's `base_stat_percents` (75-100)
+and scaled to the level like any FLAT stat.
+
+`gear_defense` and `gear_weapon_damage` are `IBaseStatModifier`: they do not add
+a line, they **rewrite the base numbers**. `gear_defense` reaches `armor`,
+`dodge` and `magic_shield`; `gear_weapon_damage` only `weapon_damage`. Order is
+load-bearing - `BaseStatsData.GetAllStats` adds every FLAT one first and only
+then multiplies by the PERCENT ones.
+
+Nothing but the gear bases mentions `weapon_damage` or `learn_bolt`, so they
+have to be fed into `fill_code_stats` explicitly (`gear_type_stats`) or a
+weapon's whole damage line renders at NONE scaling - out by 20.8x at level 100.
+
+### Affix "slots" are tags, and the layering is deliberate
+An affix declares tag requirements, not slots, and `GroupFilterType.AFFIX_SLOTS`
+resolves them by testing every affix against every `BaseGearType`. A cloth
+helmet carries `helmet`, `cloth` **and** `cloth_helmet`, so three different
+affix pools roll on it; that is not redundancy. The hybrid armours go further -
+`chainmail_helmet` carries `plate_helmet` *and* `cloth_helmet`, inheriting both
+families' affixes.
+
+`INCLUDES_ANY` (453 affixes) needs one included tag, `HAS_ALL` (52) needs all,
+and an excluded tag vetoes either. 139 affixes match no base item at all -
+enchantment, jewel and tool affixes key off tags no `BaseGearType` has; the
+in-game filter hides them the same way. Requirements are stored per-requirement
+(`row.reqs`), because `satisfiesAllRequirements` ANDs the list while each entry
+is its own any/all test - flattening them silently changes the meaning if a
+pack ever ships two.
+
 ### Tooltip rendering
 Nothing is pre-baked — the page rebuilds every tooltip at the current level, so
 the level box works. The ports:
@@ -97,6 +146,7 @@ the level box works. The ports:
 | `src/stats.js` | `StatMod.getEstimationTooltip`, `getRangeToShow`, `BasicStatRegex` |
 | `src/mcfmt.js` | colour codes, Enlighten `[label](link)`, `MMORPG.formatNumber` |
 | `src/tooltips.js` | each `BestiaryGroup` lambda's line order |
+| `src/gear.js` | `TagRequirement.meetsRequierment`, `BaseStatsData` |
 
 Two behaviours that look like bugs and are faithful:
 - **Only FLAT modifiers scale with level.** Percent and more are untouched, so
@@ -134,8 +184,10 @@ python tools/serve.py --no-open &
 ```
 
 Deep links take `?v=&g=&id=&lvl=`. Good probes: `g=spell&id=fireball` (icons,
-`[calc:]` substitution, chips), `g=unique_gear&id=azurewrath&lvl=90` (ranges,
-scaling), `g=supp_gem` (rarity picker), `g=affix` (tag + exclusion chips).
+`[calc:]` substitution, chips), `g=unique_gear&id=fracture_splint&lvl=100`
+(base stats, `gear_defense` folded in), `g=supp_gem&id=fire_flat_dmg&lvl=50`
+(rarity picker - both ends must move), `g=affix&id=strong_int_armor_suf`
+(tag chips plus the resolved base items).
 
 ## State / what's left
 - Live data: **2.1.4 only**. Older versions can be backfilled from any instance

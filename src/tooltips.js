@@ -6,6 +6,7 @@
 
 import { toHtml, toPlain, colorOf, formatNumber } from "./mcfmt.js";
 import { renderStatMod, titleCase, resolveCalcs } from "./stats.js";
+import { baseStatLines, gearTypesForAffix, gearTypeName } from "./gear.js";
 
 const blank = () => ({ html: "", text: "", kind: "blank" });
 const plain = (text, kind = "line") => ({
@@ -55,14 +56,30 @@ const BUILDERS = {
     out.push(...statLines(row.stats, ctx));
     if (row.tags?.length) {
       out.push(blank());
+      out.push(plain(row.f?.reqAll ? "Needs every tag:" : "Tag Requirements:", "sub"));
       out.push({
-        html: row.tags.map((t) => `<span class="chip">${esc(titleCase(t))}</span>`).join("")
+        html: row.tags.map((t) => `<span class="chip">${esc(tagName(ctx, t))}</span>`).join("")
           + (row.excl || []).map((t) =>
-            `<span class="chip excl">${esc(titleCase(t))}</span>`).join(""),
-        text: [...row.tags, ...(row.excl || [])].join(" "), kind: "chips",
+            `<span class="chip excl">${esc(tagName(ctx, t))}</span>`).join(""),
+        text: [...row.tags, ...(row.excl || [])]
+          .map((t) => `${t} ${tagName(ctx, t)}`).join(" "), kind: "chips",
       });
     }
+    // the tags above are the rule; this is the rule applied. a cloth helmet
+    // carries `helmet`, `cloth` and `cloth_helmet`, so three different affix
+    // pools land on it and none of them is redundant
+    const fits = gearTypesForAffix(row, ctx.balance.gearTypes || {});
     out.push(blank());
+    if (fits.length) {
+      out.push(plain("Can Roll On:", "sub"));
+      out.push({
+        html: fits.map((g) =>
+          `<span class="chip gear">${esc(gearTypeName(ctx.balance.gearTypes, g))}</span>`).join(""),
+        text: fits.map((g) =>
+          `${g} ${gearTypeName(ctx.balance.gearTypes, g)}`).join(" "), kind: "chips",
+      });
+      out.push(blank());
+    }
     if (row.f?.weight != null) out.push(meta("Weight", row.f.weight));
     out.push(meta("Id", row.id));
     if (row.f?.type) out.push(meta("Affix Type", row.f.type));
@@ -71,12 +88,26 @@ const BUILDERS = {
 
   unique_gear(row, ctx) {
     const rarity = ctx.balance.rarities?.unique;
+    const gear = ctx.balance.gearTypes?.[row.f?.baseGear];
     const out = [title(row.name, colorOf(rarity?.color, "#ffaa00"))];
-    if (row.f?.baseGear) out.push(plain(titleCase(row.f.baseGear), "sub"));
+    if (row.f?.baseGear) {
+      out.push(plain(gear?.name || titleCase(row.f.baseGear), "sub"));
+    }
+    // the base item comes first, the way GearTooltipUtils lays a gear out:
+    // name, rarity, then BaseStatsData, then the unique's own stats. these
+    // already have the unique's Gear's Defense / Weapon Damage folded in,
+    // because that is what those stats do - they rewrite the base numbers
+    // rather than adding a line of their own
+    const base = baseStatLines(gear, rarity, row.stats, ctx);
+    if (base.length) {
+      out.push(blank());
+      out.push(...base);
+    }
     out.push(blank());
     out.push(...statLines(row.stats, ctx));
     if (row.flavor) { out.push(blank()); out.push(plain("§o" + row.flavor, "flavor")); }
     out.push(blank());
+    if (gear?.slotName) out.push(meta("Slot", gear.slotName));
     if (row.f?.minLvl) out.push(meta("Min Level", row.f.minLvl));
     if (row.f?.minTier) out.push(meta("Min Map Tier", row.f.minTier));
     if (row.f?.league) out.push(meta("League", titleCase(row.f.league)));
@@ -223,8 +254,11 @@ function socketable(row, ctx) {
 
 function skillGem(row, ctx, kind) {
   const out = [title(row.name, "#55ff55")];
+  // WikiRarityButton's own tooltip prints the window, and without it a rarity
+  // that narrows both ends looks like it moved the numbers for no reason
   const rarityName = ctx.rarity
-    ? `${kind} · ${ctx.rarity.name}` : `${kind} · any rarity`;
+    ? `${kind} · ${ctx.rarity.name} (${ctx.rarity.pctMin}% - ${ctx.rarity.pctMax}%)`
+    : `${kind} · any rarity (full range)`;
   out.push(plain(rarityName, "sub"));
   out.push(blank());
   out.push(...statLines(row.stats, ctx));
@@ -247,6 +281,11 @@ function costLine(label, min, max, color) {
       + `<span class="v">${esc(value)}</span>`,
     text: `${label} ${value}`, kind: "meta",
   };
+}
+
+/** A slot tag's display name: `mmorpg.tag.gear_slot.<tag>`. */
+function tagName(ctx, id) {
+  return toPlain(ctx.lang["mmorpg.tag.gear_slot." + id]) || titleCase(id);
 }
 
 function modLabel(ctx, id) {
