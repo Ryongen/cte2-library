@@ -31,6 +31,23 @@ most ids rather than adding to them - and because entries flagged
 `hide_from_wiki` are dropped, exactly as the in-game list drops them. For spells
 that is 128 `*_deprecated` skills.
 
+## Publishing
+
+GitHub Pages, deploy-from-branch - no workflow and no build step. The site is
+entirely path-relative (verified served from a subdirectory), so it works at
+`user.github.io/cte2-library/` and at a domain root without changes.
+`.nojekyll` keeps Pages from running the files through Jekyll.
+
+1. Create an empty **public** repo named `cte2-library` - no README, no
+   .gitignore, no licence, or the first push will conflict.
+2. `git push -u origin main`
+3. Settings -> Pages -> Source **Deploy from a branch**, branch `main`, folder
+   `/ (root)`, Save.
+
+The first build takes a minute or two. After that every push republishes.
+
+Pages needs the repo to be public unless the account has Pro or Team.
+
 ## Running it
 
 ```
