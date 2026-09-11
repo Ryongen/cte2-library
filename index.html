@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTE2 Library</title>
+<meta name="description" content="Browse every affix, unique, rune, spell and support gem in the Craft to Exile 2 modpack, at any character level.">
+<link rel="icon" href="assets/icons/group/unique_gear.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="top">
+  <h1>CTE2 <span>Library</span></h1>
+
+  <label class="ctl">
+    <span>Version</span>
+    <select id="version"></select>
+  </label>
+
+  <label class="ctl">
+    <span>Level</span>
+    <input id="level" type="number" min="1" max="100" value="1" inputmode="numeric">
+  </label>
+
+  <label class="ctl grow">
+    <span>Search</span>
+    <input id="search" type="search" placeholder="Name or id&hellip;" autocomplete="off">
+  </label>
+
+  <label class="ctl check">
+    <input id="search-tips" type="checkbox">
+    <span>Search tooltips</span>
+  </label>
+</header>
+
+<main>
+  <nav id="rail" aria-label="Categories"></nav>
+
+  <section class="mid">
+    <div class="bar">
+      <label class="filter" id="rarity" hidden></label>
+      <div id="filters"></div>
+      <span id="count" class="count"></span>
+    </div>
+    <div id="list" class="list"></div>
+  </section>
+
+  <aside id="tip" class="tip"></aside>
+</main>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
