@@ -49,7 +49,7 @@ body {
 
 .ctl { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
 .ctl > span { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
-.ctl.grow { flex: 1 1 200px; min-width: 160px; }
+.ctl.grow { flex: 1 1 200px; min-width: 160px; max-width: 340px; }
 
 .ctl input, .ctl select {
   background: var(--panel-2);
@@ -197,6 +197,14 @@ nav#rail {
   font-size: 11px;
 }
 .chip.excl { background: #2e1f22; color: #c98a8a; text-decoration: line-through; }
+.chip.gear { background: #1f2c26; color: #8fc7a8; }
+
+/* the item's own base numbers, drawn the way BaseLocalStatTooltip does -
+   a bullet, the stat name, then the value */
+.tl.base { display: flex; gap: 8px; color: #d9c48b; }
+.tl.base .bullet { color: #d9c48b; }
+.tl.base .k { flex: 1 1 auto; }
+.tl.base .v { color: #e8e8e8; font-variant-numeric: tabular-nums; }
 
 .runes { color: #ff5555; letter-spacing: .08em; font-weight: 700; }
 

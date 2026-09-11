@@ -9,6 +9,7 @@ import { loadVersions, loadVersion, loadGroup, iconUrl } from "./data.js";
 import { Scaling, MIN_LEVEL } from "./scaling.js";
 import { buildTooltip, tooltipText } from "./tooltips.js";
 import { titleCase } from "./stats.js";
+import { indexAffixGear, gearTypeName } from "./gear.js";
 
 const GROUPS = [
   ["currency", "Currency", "currency"],
@@ -28,9 +29,13 @@ const GROUPS = [
 const RARITY_GROUPS = new Set(["aura", "supp_gem"]);
 
 // which filter dimensions each group offers, and how to label them
+// `gear` is the resolved list - which base items an affix can actually roll
+// on, the way GroupFilterType.AFFIX_SLOTS works. `slot` is the raw tag rule
+// behind it, kept because several affix pools overlap on one item and the tag
+// is the only way to ask for one of them.
 const FILTERS = {
-  affix: [["type", "Affix Type"], ["slot", "Applies To"]],
-  unique_gear: [["slot", "Slot"], ["league", "League"]],
+  affix: [["type", "Affix Type"], ["gear", "Base Item"], ["slot", "Tag"]],
+  unique_gear: [["slot", "Base Item"], ["league", "League"]],
   runeword: [["runeCount", "Rune Count"], ["slot", "Slot"]],
   spell: [["tag", "Tag"], ["style", "Style"]],
   effect: [["type", "Type"], ["tag", "Tag"]],
@@ -111,6 +116,9 @@ async function selectGroup(key, selectId) {
 
   const group = await loadGroup(state.version, key);
   state.rows = group.rows || [];
+  // the affix -> base item mapping is a join across two files, so it is done
+  // once here rather than per row on every keystroke
+  if (key === "affix") indexAffixGear(state.rows, state.version.balance.gearTypes);
   renderGroupRail();
   renderFilters();
   applyFilter();
@@ -170,12 +178,28 @@ function renderFilters() {
       for (const v of row.filters?.[dim] || []) if (v) values.add(v);
     }
     if (!values.size) return "";
-    const opts = [...values].sort().map((v) =>
-      `<option value="${esc(v)}">${esc(titleCase(v))}</option>`).join("");
+    const opts = [...values]
+      .map((v) => [v, filterLabel(dim, v)])
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([v, text]) =>
+        `<option value="${esc(v)}">${esc(text)}</option>`).join("");
     return `<label class="filter"><span>${label}</span>
       <select data-dim="${dim}"><option value="">Any</option>${opts}</select>
     </label>`;
   }).join("");
+}
+
+/** A filter value's display text - ids that lang can name, get named. */
+function filterLabel(dim, value) {
+  const balance = state.version?.balance;
+  if (dim === "gear" || (dim === "slot" && state.group === "unique_gear")) {
+    return gearTypeName(balance?.gearTypes, value);
+  }
+  if (dim === "slot" && state.group === "affix") {
+    const text = balance && state.version.lang["mmorpg.tag.gear_slot." + value];
+    if (text) return text;
+  }
+  return titleCase(value);
 }
 
 function matches(row) {
