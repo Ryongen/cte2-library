@@ -1,0 +1,25 @@
+{
+ "pack": "2.1.4",
+ "mods": {
+  "library_of_exile": "2.1.14",
+  "dungeon_realm": "1.1.16",
+  "the_harvest": "1.1.8",
+  "ancient_obelisks": "1.2.8",
+  "mmorpg": "6.4.13"
+ },
+ "generated": "2026-09-11T05:14:22Z",
+ "maxLevel": 100,
+ "counts": {
+  "currency": 86,
+  "affix": 521,
+  "gem": 72,
+  "rune": 22,
+  "unique_gear": 258,
+  "runeword": 59,
+  "aura": 28,
+  "supp_gem": 90,
+  "effect": 209,
+  "spell": 309,
+  "prof": 55
+ }
+}
