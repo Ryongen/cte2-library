@@ -1,0 +1,5 @@
+# The extractor writes LF. Without this, a Windows checkout converts to CRLF
+# and the next `extract.py` run shows every data file as modified even when
+# nothing changed.
+* text=auto eol=lf
+*.png binary
