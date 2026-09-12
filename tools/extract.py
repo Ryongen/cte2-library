@@ -31,7 +31,7 @@ LANG_PREFIXES = (
     "library_of_exile.item_modification.", "library_of_exile.item_requirement.",
     "library_of_exile.currency.", "mmorpg.profession.", "mmorpg.gearslot.",
     "mmorpg.rarity.", "mmorpg.runeword.", "mmorpg.rune.", "mmorpg.gem.",
-    "mmorpg.gear_type.",
+    "mmorpg.gear_type.", "mmorpg.asc_class.",
 )
 
 

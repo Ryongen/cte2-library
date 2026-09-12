@@ -22,8 +22,8 @@ Pick a category on the left, click an entry, read its tooltip on the right.
   tooltip text instead - useful for finding every affix that mentions Freeze
   Chance, or which spells are tagged Projectile.
 - **Filters** above the list narrow a category: affix type and which base item
-  it rolls on, unique gear slot and league, rune count, spell tag and style, and
-  so on.
+  it rolls on, unique gear slot and league, rune count, spell class, tag and
+  style, and so on.
 - **Auras and support gems** get a rarity picker, since their numbers roll
   inside a rarity's window.
 - The address bar follows along, so a link like
@@ -32,6 +32,13 @@ Pick a category on the left, click an entry, read its tooltip on the right.
 Spell damage reads the way the game writes it - a base number plus its scaling
 terms, like `36 +234% Weapon Damage` - because there is no character here to
 scale it against.
+
+A skill that sets another one off draws it underneath, under **Triggers** -
+Banishing Blade's buff is what makes you apply Soul Wound, and that chain runs
+through three registries the in-game screen leaves you to walk yourself. The
+triggered skill's name is a link to its own entry, and **Proc Recharge** is the
+gap between two triggered casts, which no Cast Speed or Cooldown Reduction can
+shorten.
 
 ## What's in it
 

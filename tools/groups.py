@@ -6,6 +6,7 @@ the level-scaled numbers are computed in the browser, because the level box
 changes them on every keystroke.
 """
 
+import collections
 import re
 
 import registries as regs
@@ -42,6 +43,20 @@ class Context:
         self.reg = loaded
         self.lang = lang
         self.code_stats = code_stats or {"exact": {}, "patterns": []}
+        self._procs = None
+        self._classes = None
+
+    def procs(self):
+        """stat id -> the spells it casts. Built once, read by two groups."""
+        if self._procs is None:
+            self._procs = proc_spell_index(self)
+        return self._procs
+
+    def classes(self):
+        """(class key -> {name, order}, spell id -> class key). Built once."""
+        if self._classes is None:
+            self._classes = spell_classes(self)
+        return self._classes
 
     def raw(self, key):
         return self.lang.get(key) if key else None
@@ -109,6 +124,126 @@ def _entries(ctx, group_key):
         if entry_id in regs.PLACEHOLDER_IDS or _hidden(entry):
             continue
         yield entry_id, entry
+
+
+# ------------------------------------------------------- cross-registry index
+
+def proc_spell_index(ctx):
+    """stat id -> the spells that stat casts when it fires.
+
+    A proc is a three-hop chain and no single registry holds it. The stat
+    (`proc_soul_wound`) names stat effects; a stat effect with `ser:
+    "proc_spell"` names the `spellId` it casts (`proc_spell_soul_wound` ->
+    `soul_wound`). So the thing a player sees - Banishing Blade's buff makes
+    you apply Soul Wound - is only reachable by walking
+
+        spell -> exile effect -> the effect's stats -> stat effect -> spell
+
+    and the wiki screen never walks it: it prints the stat's own sentence and
+    leaves you to go find the skill. 99 stats proc one of 80 spells.
+
+    The conditions on a proc (`ifs`: on kill, on crit, not on cooldown) are
+    deliberately not read here - the stat's lang line already spells them out,
+    and it is the line the site renders right above this.
+    """
+    casts = {
+        eid: e["spellId"]
+        for eid, e in (ctx.reg.get("stat_effect") or {}).items()
+        if e.get("ser") == "proc_spell" and e.get("spellId")
+    }
+    out = {}
+    for stat_id, stat in (ctx.reg.get("stat") or {}).items():
+        spells = []
+        for block in stat.get("effect") or []:
+            if not isinstance(block, dict):
+                continue
+            for eid in block.get("effects") or []:
+                spell = casts.get(eid)
+                if spell and spell not in spells:
+                    spells.append(spell)
+        if spells:
+            out[stat_id] = spells
+    return out
+
+
+def proccable_spells(ctx):
+    """The spell ids something can proc - who Proc Recharge is a fact about.
+
+    `proc_cooldown_ticks` is on every spell and means nothing on most of them:
+    it is the gap ProcSpellEffect enforces between two triggered casts, read
+    straight off the config so no Cast Speed or Cooldown Reduction can move it.
+    A skill nothing procs never reaches that code.
+    """
+    return {e["spellId"] for e in (ctx.reg.get("stat_effect") or {}).values()
+            if e.get("ser") == "proc_spell" and e.get("spellId")}
+
+
+def _row_procs(row, index):
+    """The spells a row's own stats proc, in stat order."""
+    out = []
+    stats = list(row.get("stats") or [])
+    for group in row.get("sets") or []:
+        stats.extend(group["stats"])
+    for s in stats:
+        for spell in index.get(s["stat"]) or []:
+            if spell not in out:
+                out.append(spell)
+    return out
+
+
+# `0_10_fighter` - the pack's own ordering, then the class's display name
+_CLASS_FOLDER = re.compile(r"^(\d+)_(\d+)_")
+
+
+def _folder_sort(folder):
+    m = _CLASS_FOLDER.match(folder)
+    if not m:
+        return (1, 0, 0, folder)
+    return (0, int(m.group(1)), int(m.group(2)), folder)
+
+
+def spell_classes(ctx):
+    """(class key -> {name, order}, spell id -> class key) for the Spells filter.
+
+    `mmorpg_spells` is one folder per class and the folder is the better
+    answer than the class tree alone: `mmorpg_spell_school` lists only the
+    skills a class *grants*, so Soul Wound, Rip Apart and every other
+    sub-spell a skill casts belongs to no school at all while sitting in its
+    class's folder. Every live spell but the six in the jar has one.
+
+    The school registry is still needed for the name, because a folder is
+    named for what the class is *called* and not for its id - `0_10_fighter`
+    is the school `warrior` and `0_8_elementalist` is `sorcerer`. A school's
+    own skills say which folder is that school's, which is why this is a
+    count rather than a string match.
+    """
+    folder_of = {}
+    for spell_id, e in (ctx.reg.get("spell") or {}).items():
+        path = e.get("_path") or ""
+        if "/" in path:
+            folder_of[spell_id] = path.split("/", 1)[0]
+
+    school_of = {}
+    for school_id, school in sorted((ctx.reg.get("spell_school") or {}).items()):
+        seen = collections.Counter(
+            folder_of[p] for p in (school.get("perks") or {}) if p in folder_of)
+        if seen:
+            school_of.setdefault(seen.most_common(1)[0][0], school_id)
+
+    classes, key_of = {}, {}
+    for folder in sorted(set(folder_of.values()), key=_folder_sort):
+        school = school_of.get(folder)
+        bare = _CLASS_FOLDER.sub("", folder)
+        key = school or bare
+        classes[key] = {
+            "name": (ctx.name(["mmorpg.asc_class." + school], bare) if school
+                     else title_case(bare)),
+            # the numeric prefix is the pack's grouping - the twelve player
+            # classes, then gear spells, then summons, then mercenaries
+            "order": len(classes),
+        }
+        key_of[folder] = key
+    return classes, {sid: key_of[f] for sid, f in folder_of.items()}
 
 
 # ---------------------------------------------------------------- builders
@@ -285,6 +420,12 @@ def build_effect(ctx):
         row["tags"] = tags
         _facts(row, e, [("type", "type"), ("max_stacks", "maxStacks"),
                         ("stacks_affect_stats", "stacksAffectStats")])
+        # the skills this effect's stats cast. 17 effects carry one, and they
+        # are the middle link of every "buff makes you apply X" skill - the
+        # spell group reads it back through the effect the skill grants
+        procs = _row_procs(row, ctx.procs())
+        if procs:
+            row["procs"] = procs
         row["filters"] = {"type": [e.get("type", "")], "tag": tags}
         rows.append(row)
     return rows
@@ -292,6 +433,10 @@ def build_effect(ctx):
 
 # ExileEffectAction.INFINITE_DURATION - a potion_dur of -1 never expires.
 INFINITE_DURATION = -1
+
+# SpellConfiguration.DEFAULT_PROC_COOLDOWN_TICKS. Every spell the pack ships
+# sets its own; the six that fall back to this are the jar's.
+DEFAULT_PROC_COOLDOWN_TICKS = 20
 
 # ExileEffectAction.GiveOrTake. REMOVE_NEGATIVE has no GiveOrTake2 pair, so the
 # action bails out before applying anything and there is nothing to show.
@@ -386,6 +531,8 @@ def _spell_effects(ctx, entry):
 
 
 def build_spell(ctx):
+    classes, class_of = ctx.classes()
+    proccable = proccable_spells(ctx)
     rows = []
     for entry_id, e in _entries(ctx, "spell"):
         row = _base(e, ctx.name(["mmorpg.spell." + entry_id], entry_id))
@@ -410,7 +557,16 @@ def build_spell(ctx):
             "weapon": cfg.get("castingWeapon", ""),
             "style": cfg.get("style", ""),
             "timesToCast": cfg.get("times_to_cast", 1),
+            # SpellConfiguration.DEFAULT_PROC_COOLDOWN_TICKS when absent, and
+            # 0 is a real value meaning no limit at all - so it cannot be
+            # dropped the way an empty field would be
+            "procCd": cfg.get("proc_cooldown_ticks",
+                              DEFAULT_PROC_COOLDOWN_TICKS),
         }
+        # what this skill's own gem stats proc, beside what its buffs do
+        procs = _row_procs(row, ctx.procs())
+        if procs:
+            row["procs"] = procs
         # what the skill puts on you, so a buff skill reads without a trip to
         # Status Effects. The stats stay in the effect group - they are looked
         # up by id at render time, because they scale with this skill's level
@@ -425,7 +581,13 @@ def build_spell(ctx):
         _facts(row, e, [("weight", "weight"), ("min_lvl", "minLvl"),
                         ("max_lvl", "maxLvl"), ("default_lvl", "defaultLvl"),
                         ("lvl_based_on_spell", "lvlFrom")])
-        row["filters"] = {"tag": tags, "style": [cfg.get("style", "")]}
+        cls = class_of.get(entry_id)
+        if cls:
+            row.setdefault("f", {})["cls"] = cls
+        if entry_id in proccable:
+            row.setdefault("f", {})["proccable"] = True
+        row["filters"] = {"cls": [cls] if cls else [],
+                          "tag": tags, "style": [cfg.get("style", "")]}
         rows.append(row)
     return rows
 
@@ -709,6 +871,9 @@ def build_balance(ctx):
         # The mod's default is 5; this pack ships 8.
         "maxBonusSpellLevels": balance.get("MAX_BONUS_SPELL_LEVELS", 5),
         "gearTypes": build_gear_types(ctx),
+        # the Spells group's class filter: key -> display name and the pack's
+        # own ordering, so the twelve player classes sort ahead of gear spells
+        "spellClasses": ctx.classes()[0],
         "curves": {
             "NORMAL": curve("NORMAL_STAT_SCALING"),
             "CORE": curve("CORE_STAT_SCALING"),
