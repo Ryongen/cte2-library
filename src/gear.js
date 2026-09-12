@@ -74,13 +74,21 @@ export function indexAffixGear(rows, gearTypes) {
 // ------------------------------------------------------------- base stats
 
 /**
- * A gear's base stats at a level, after its own modifiers.
+ * A gear's base stats at a level, both before and after its own modifiers.
  *
- * BaseStatsData.GetAllStats, with the roll replaced by the range the rarity
- * allows. The order is the mod's and it matters: a base stat is first rolled
- * inside `base_stat_percents` and scaled to the level, then every FLAT
- * IBaseStatModifier is added, and only then do the PERCENT ones multiply.
- * Doing the percent first would make `50% Gear's Defense` miss the flat part.
+ * The mod draws this block twice and the two do not agree, so both numbers
+ * come back here:
+ *
+ *   - `rawLo/rawHi` is BaseStatsData.getAllStatsWithCtx, the shift view. It
+ *     rolls the BaseGearType's own StatMod inside `base_stat_percents` and
+ *     prints `[min - max]` from that alone - no IBaseStatModifier is ever
+ *     consulted on that path, so the bracket on a Gear's Defense unique is
+ *     the window *before* its own stat moves it.
+ *   - `lo/hi` is BaseStatsData.GetAllStats, the line actually drawn without
+ *     shift, which is what the item ends up giving you. The order there is the
+ *     mod's and it matters: every FLAT IBaseStatModifier is added first and
+ *     only then do the PERCENT ones multiply, so doing the percent first would
+ *     make `50% Gear's Defense` miss the flat part.
  *
  * Quality is left at 0 - a blueprint-built preview has none, so
  * getQualityBaseStatsBonus contributes nothing.
@@ -89,8 +97,10 @@ export function baseStatRange(mod, rarity, modifiers, lvl, scaling) {
   const p0 = rarity?.basePctMin ?? 0;
   const p1 = rarity?.basePctMax ?? 100;
   const span = mod.max - mod.min;
-  let lo = scaling.scale(mod.stat, mod.type, mod.min + (span * p0) / 100, lvl);
-  let hi = scaling.scale(mod.stat, mod.type, mod.min + (span * p1) / 100, lvl);
+  const rawLo = scaling.scale(mod.stat, mod.type, mod.min + (span * p0) / 100, lvl);
+  const rawHi = scaling.scale(mod.stat, mod.type, mod.min + (span * p1) / 100, lvl);
+  let lo = rawLo;
+  let hi = rawHi;
 
   const applies = (m) => BASE_STAT_MODIFIERS[m.stat]?.has(mod.stat);
   for (const m of modifiers || []) {
@@ -103,7 +113,7 @@ export function baseStatRange(mod, rarity, modifiers, lvl, scaling) {
     lo *= 1 + m.min / 100;
     hi *= 1 + m.max / 100;
   }
-  return { lo, hi };
+  return { lo, hi, rawLo, rawHi };
 }
 
 /** True if any of `mods` would move this gear's base stats. */
@@ -122,6 +132,14 @@ export function modifiesBaseStats(mods, baseStats) {
  * or the modifier is one, then the number. The in-game line shows the single
  * value that was rolled; here there is no roll, so the rarity's whole window
  * is shown instead, the way holding shift over a real item does.
+ *
+ * The shift view is also where the number comes from: its `[110 - 126]` is the
+ * base stat alone, so that is what a reader holding shift over the real item
+ * sees and it goes first. A unique carrying `gear_defense` or
+ * `gear_weapon_damage` then gets the window it actually ends up with in
+ * parentheses after it - the no-shift `●` line's own answer, which the
+ * bracket never shows. Nothing is appended when no modifier moved the numbers,
+ * which is every base item and most uniques.
  */
 export function baseStatLines(gearType, rarity, modifiers, ctx) {
   const { lvl, lang, scaling } = ctx;
@@ -136,19 +154,26 @@ export function baseStatLines(gearType, rarity, modifiers, ctx) {
       return { html: line.html, text: line.text, kind: "base" };
     }
 
-    const { lo, hi } = baseStatRange(mod, rarity, modifiers, lvl, scaling);
+    const r = baseStatRange(mod, rarity, modifiers, lvl, scaling);
     // the `%` rides on the name, not the number - BaseLocalStatTooltip appends
     // it to locName and prints the value bare, so `Block Chance%: 17 -> 20`
     const percent = Boolean(meta?.percent) || mod.type !== "FLAT";
     const label = toPlain(name || titleCase(mod.stat)) + (percent ? "%" : "");
-    const value = lo === hi
-      ? formatNumber(lo)
-      : `${formatNumber(lo)} -> ${formatNumber(hi)}`;
+    const window = (a, b) => (a === b
+      ? formatNumber(a)
+      : `${formatNumber(a)} -> ${formatNumber(b)}`);
+    const value = window(r.rawLo, r.rawHi);
+    // compared after formatting, so a modifier too small to move the printed
+    // number does not earn a parenthetical that repeats it
+    const moved = window(r.lo, r.hi);
+    const extra = moved === value ? "" : ` (${moved})`;
     return {
       html: `<span class="bullet">●</span>`
         + `<span class="k">${escapeText(label)}</span>`
-        + `<span class="v">${escapeText(value)}</span>`,
-      text: `${label} ${value}`,
+        + `<span class="v">${escapeText(value)}`
+        + (extra ? `<span class="mod">${escapeText(extra)}</span>` : "")
+        + `</span>`,
+      text: `${label} ${value}${extra}`,
       kind: "base",
     };
   });
