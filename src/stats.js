@@ -132,10 +132,12 @@ export function renderExactStat(mod, percent, lvl, scaling, lang) {
 /**
  * Narrow a range to what one rarity can actually roll.
  *
- * A gear rarity carries base_stat_percents - rare rolls 30..100% of a stat's
- * span, mythic a tighter, higher window. Picking a rarity in the wiki shows
- * that window instead of the full range, which is what the rarity button does
- * in game via ExactStatData.fromStatModifier(mod, percent, lvl).
+ * This is `stat_percents`, the roll window - rare lands at 35..51% of a stat's
+ * span, mythic at 86..100% - and never `base_stat_percents`, which is the
+ * gear's own base stats and starts every rarity at x..100. Picking a rarity
+ * shows that window instead of the full range, which is what the rarity button
+ * does in game via ExactStatData.fromStatModifier(mod, percent, lvl), and what
+ * AffixData.getMinMax hands an affix.
  */
 function applyRarity(mod, rarity) {
   if (!rarity) return mod;

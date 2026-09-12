@@ -49,6 +49,19 @@ function ticksToSeconds(ticks) {
   return `${formatNumber(ticks / 20)}s`;
 }
 
+/**
+ * The roll window the rarity picker is showing, as a line of its own.
+ *
+ * WikiRarityButton's own tooltip prints the same window in game, and without
+ * it a rarity that narrows both ends looks like it moved the numbers for no
+ * reason.
+ */
+function rarityLabel(ctx) {
+  return ctx.rarity
+    ? `${ctx.rarity.name} (${ctx.rarity.pctMin}% - ${ctx.rarity.pctMax}%)`
+    : "Any rarity (full range)";
+}
+
 function tagChips(tags) {
   if (!tags || !tags.length) return null;
   return {
@@ -62,6 +75,8 @@ function tagChips(tags) {
 const BUILDERS = {
   affix(row, ctx) {
     const out = [title(row.name, "#55ffff")];
+    out.push(plain(rarityLabel(ctx), "sub"));
+    out.push(blank());
     out.push(...statLines(row.stats, ctx));
     if (row.tags?.length) {
       out.push(blank());
@@ -304,12 +319,7 @@ function socketable(row, ctx) {
 
 function skillGem(row, ctx, kind) {
   const out = [title(row.name, "#55ff55")];
-  // WikiRarityButton's own tooltip prints the window, and without it a rarity
-  // that narrows both ends looks like it moved the numbers for no reason
-  const rarityName = ctx.rarity
-    ? `${kind} · ${ctx.rarity.name} (${ctx.rarity.pctMin}% - ${ctx.rarity.pctMax}%)`
-    : `${kind} · any rarity (full range)`;
-  out.push(plain(rarityName, "sub"));
+  out.push(plain(`${kind} · ${rarityLabel(ctx)}`, "sub"));
   out.push(blank());
   out.push(...statLines(row.stats, ctx));
   out.push(blank());

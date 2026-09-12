@@ -25,8 +25,13 @@ const GROUPS = [
   ["prof", "Profession EXP", "prof"],
 ];
 
-// BestiaryGroup.hasRarityPicker - only the skill gems roll a rarity
-const RARITY_GROUPS = new Set(["aura", "supp_gem"]);
+// BestiaryGroup.hasRarityPicker is set on the two gem groups alone, but an
+// affix rolls its percent in the very same window: AffixData.getMinMax is the
+// gear rarity's `stat_percents`, which is what SkillGemBlueprint rolls a gem's
+// perc in. So the picker rides on affixes here too - "Any" is the affix's whole
+// span, the way the group has always read, and picking a rarity narrows it to
+// what that tier can actually roll.
+const RARITY_GROUPS = new Set(["affix", "aura", "supp_gem"]);
 
 // which filter dimensions each group offers, and how to label them
 // `gear` is the resolved list - which base items an affix can actually roll
@@ -98,6 +103,8 @@ async function boot() {
   if (Number.isFinite(lvl)) state.lvl = lvl;
   const slvl = parseInt(params.get("slvl"), 10);
   if (Number.isFinite(slvl)) state.skillLvl = slvl;
+  // checked against the version's own picker once that has loaded, below
+  if (params.get("r")) state.rarity = params.get("r");
 
   renderVersionPicker();
   renderGroupRail();
@@ -114,6 +121,7 @@ async function selectVersion(pack, selectId) {
   state.cats = new Map((state.version.balance.gearCategories || [])
     .map((c) => [c.key, c]));
   state.lvl = clampLevel(state.lvl);
+  state.rarity = pickableRarity(state.rarity);
   localStorage.setItem("cte2.version", pack);
   $("#version").value = pack;
   $("#level").max = String(state.scaling.maxLevel);
@@ -126,6 +134,16 @@ function clampLevel(lvl) {
   const max = state.scaling?.maxLevel || 100;
   if (!Number.isFinite(lvl)) return MIN_LEVEL;
   return Math.min(Math.max(lvl, MIN_LEVEL), max);
+}
+
+// A rarity id off the url means something only if this version's picker offers
+// it: the ids are the pack's own, and one it does not ship would sit in the
+// select as a pick that matches nothing and narrows nothing. "Any" is the
+// honest fallback, and it is the default anyway.
+function pickableRarity(rid) {
+  if (!rid) return null;
+  const picks = state.version?.balance?.pickableRarities || [];
+  return picks.includes(rid) ? rid : null;
 }
 
 async function selectGroup(key, selectId) {
@@ -409,6 +427,8 @@ function wireControls() {
     state.rarity = e.target.value || null;
     state.tooltipCache = new WeakMap();
     renderTooltip();
+    if (state.search && state.searchTooltips) applyFilter();
+    syncUrl();
   });
 
   $("#search").addEventListener("input", (e) => {
@@ -449,6 +469,7 @@ function syncUrl() {
   p.set("g", state.group);
   if (state.lvl !== MIN_LEVEL) p.set("lvl", String(state.lvl));
   if (state.skillLvl != null) p.set("slvl", String(state.skillLvl));
+  if (state.rarity) p.set("r", state.rarity);
   if (state.selected) p.set("id", state.selected.id);
   history.replaceState(null, "", `?${p}`);
 }
