@@ -56,11 +56,18 @@ export function gearTypesForAffix(row, gearTypes) {
   return out.sort();
 }
 
-/** Every affix's gear list, computed once per group load. */
+/** Every affix's gear list and categories, computed once per group load. */
 export function indexAffixGear(rows, gearTypes) {
   for (const row of rows || []) {
+    const gear = gearTypesForAffix(row, gearTypes);
     row.filters = row.filters || {};
-    row.filters.gear = gearTypesForAffix(row, gearTypes);
+    row.filters.gear = gear;
+    // the same grouping the other gear groups carry, over what this affix
+    // resolved to rather than over the tags it asks for: `cloth_helmet` and
+    // `helmet` are two different rules that both land on "Any Helmet". The 139
+    // affixes that match no base item get none, which is the honest answer.
+    row.filters.cat = [...new Set(
+      gear.flatMap((id) => gearTypes?.[id]?.cats || []))];
   }
 }
 

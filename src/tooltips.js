@@ -115,6 +115,9 @@ const BUILDERS = {
     out.push(blank());
     out.push(...statLines(row.stats, ctx));
     if (row.flavor) { out.push(blank()); out.push(plain("§o" + row.flavor, "flavor")); }
+    // GearTooltipUtils accepts the set block straight after the stats, above
+    // everything the item's footer says - so it sits here and not at the end
+    out.push(...setLines(row, ctx));
     out.push(blank());
     if (gear?.slotName) out.push(meta("Slot", gear.slotName));
     if (row.f?.minLvl) out.push(meta("Min Level", row.f.minLvl));
@@ -400,6 +403,59 @@ function effectEntry(ref, ctx, skill, act) {
 }
 
 /**
+ * The gear set this unique belongs to, drawn under its own stats.
+ *
+ * ItemSet.getTooltip's shape, minus the one thing a wiki page cannot know:
+ * how many pieces are being worn. The mod prints "Oath of Mahj (2/4)" and
+ * colours each tier green once you reach it, grey while you have not; here
+ * every tier is potential, so the header counts the whole set and each tier
+ * keeps its piece count in front of it.
+ *
+ * The numbers are not a range and the rarity picker does not touch them:
+ * SetBonus.getStats asks for 100% every time. Only the level moves them, and
+ * only the FLAT ones, like everywhere else.
+ *
+ * The other pieces are rows of this same group, so each is a button - the
+ * whole point of listing them is not having to search for the next one.
+ */
+function setLines(row, ctx) {
+  const set = ctx.balance.itemSets?.[row.setId];
+  if (!set) return [];
+  const size = set.uniques.length;
+  const out = [blank(), {
+    html: `<span class="eff-name set-name">${esc(set.name)}</span>`
+      + `<span class="eff-note">set · ${size} pieces</span>`,
+    text: `${set.name} set ${size} pieces`, kind: "eff set",
+  }];
+  for (const id of set.uniques) {
+    const piece = ctx.uniques?.get(id);
+    const name = piece?.name || titleCase(id);
+    // a link only where there is a row to land on: the piece being looked at
+    // is already here, and a member the group does not hold would go nowhere
+    const here = id === row.id;
+    out.push({
+      html: here || !piece
+        ? `<span class="set-piece here">${esc(name)}</span>`
+          + (here ? `<span class="eff-note">this item</span>` : "")
+        : `<button type="button" class="set-piece proc-link" `
+          + `data-entry="${esc(id)}">${esc(name)}</button>`,
+      text: here ? `${name} this item` : name, kind: "set-piece",
+    });
+  }
+  // cumulative: every tier at or below what you wear applies, so a 4-piece
+  // set hands you the 2, 3 and 4 lines at once
+  for (const bonus of set.bonuses) {
+    for (const line of exactStatLines(bonus.stats, 100, ctx)) {
+      out.push({
+        html: `<span class="set-tier">(${esc(bonus.pieces)})</span>` + line.html,
+        text: `(${bonus.pieces}) ${line.text}`, kind: "stat set-bonus",
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * A skill's rank, following `lvl_based_on_spell` to whichever skill owns it.
  *
  * Spell.getLevelOf hands the question straight to the other spell - Soul Wound
@@ -473,7 +529,7 @@ function procEntry(spell, via, ctx) {
 
   const out = [{
     html: `<button type="button" class="eff-name proc-link" `
-      + `data-spell="${esc(spell.id)}">${esc(spell.name)}</button>`
+      + `data-entry="${esc(spell.id)}">${esc(spell.name)}</button>`
       + `<span class="eff-note">${esc(notes.join(" · "))}</span>`,
     text: `${spell.name} ${notes.join(" ")}`, kind: "eff proc",
   }];

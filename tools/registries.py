@@ -69,6 +69,10 @@ SUPPORT_REGISTRIES = {
     "value_calc":   Registry("mmorpg", "mmorpg_value_calc", ID),
     "gear_slot":    Registry("mmorpg", "mmorpg_gear_slot", ID),
     "gear_type":    Registry("mmorpg", "mmorpg_base_gear_types", GUID),
+    # a weapon's own class, and the only honest 1h/2h answer: DualWieldUtils
+    # reads `can_dual_wield` here, not the `two_handed` tag a base gear type
+    # carries. The two disagree - see build_gear_categories.
+    "weapon_type":  Registry("mmorpg", "mmorpg_weapon_type", ID),
     "item_set":     Registry("mmorpg", "mmorpg_sets", ID),
     # what a stat *does*, not how it scales. The `proc_spell` ones name a
     # spellId, which is the only link between a stat like `proc_soul_wound`
