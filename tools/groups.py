@@ -45,6 +45,8 @@ class Context:
         self.code_stats = code_stats or {"exact": {}, "patterns": []}
         self._procs = None
         self._classes = None
+        self._gear = None
+        self._sets = None
 
     def procs(self):
         """stat id -> the spells it casts. Built once, read by two groups."""
@@ -57,6 +59,24 @@ class Context:
         if self._classes is None:
             self._classes = spell_classes(self)
         return self._classes
+
+    def gear(self):
+        """(gear type id -> row, category list). Built once.
+
+        Two groups read it before `build_balance` ships it, so it cannot be
+        built there: a unique files itself under its base item's categories,
+        and a runeword under its slots'.
+        """
+        if self._gear is None:
+            types = build_gear_types(self)
+            self._gear = (types, build_gear_categories(self, types))
+        return self._gear
+
+    def item_sets(self):
+        """(set id -> row, unique id -> set id). Built once."""
+        if self._sets is None:
+            self._sets = build_item_sets(self)
+        return self._sets
 
     def raw(self, key):
         return self.lang.get(key) if key else None
@@ -330,6 +350,8 @@ def build_gem(ctx):
 
 
 def build_unique_gear(ctx):
+    gear_types, _cats = ctx.gear()
+    set_of = ctx.item_sets()[1]
     rows = []
     for entry_id, e in _entries(ctx, "unique_gear"):
         row = _base(e, ctx.name(["mmorpg.unique_gear." + entry_id + ".name",
@@ -343,15 +365,24 @@ def build_unique_gear(ctx):
                         ("min_drop_lvl", "minLvl"), ("min_tier", "minTier"),
                         ("rarity", "rarity"), ("weight", "weight"),
                         ("force_item_id", "item")])
+        base = gear_types.get(e.get("base_gear") or "") or {}
         row["filters"] = {
             "slot": [e.get("base_gear", "")],
+            "cat": list(base.get("cats") or []),
             "league": [e.get("league") or "none"],
         }
+        # a unique is only ever in one set - ItemSet.ofUnique is a HashMap, so
+        # a second one claiming it would silently take it over
+        set_id = set_of.get(entry_id)
+        if set_id:
+            row["setId"] = set_id
+            row["filters"]["set"] = [set_id]
         rows.append(row)
     return rows
 
 
 def build_runeword(ctx):
+    gear_types, _cats = ctx.gear()
     rows = []
     for entry_id, e in _entries(ctx, "runeword"):
         row = _base(e, ctx.name(["mmorpg.runeword." + entry_id], entry_id))
@@ -361,7 +392,17 @@ def build_runeword(ctx):
         row["runes"] = runes
         row["slots"] = slots
         row.setdefault("f", {})["runeCount"] = len(runes)
-        row["filters"] = {"runeCount": [str(len(runes))], "slot": slots}
+        # a runeword names gear *slots*, not base items, so its categories are
+        # every category of every base item sitting in those slots
+        cats = []
+        for gear in gear_types.values():
+            if gear["slot"] not in slots:
+                continue
+            for cat in gear.get("cats") or []:
+                if cat not in cats:
+                    cats.append(cat)
+        row["filters"] = {"runeCount": [str(len(runes))], "slot": slots,
+                          "cat": cats}
         rows.append(row)
     return rows
 
@@ -689,13 +730,14 @@ def build_gear_types(ctx):
     answers to `helmet`, `cloth` and `cloth_helmet` at once.
     """
     slots = ctx.reg.get("gear_slot") or {}
+    weapons = ctx.reg.get("weapon_type") or {}
     out = {}
     for gid, g in sorted((ctx.reg.get("gear_type") or {}).items()):
         if gid in regs.PLACEHOLDER_IDS:
             continue
         slot_id = g.get("gear_slot") or ""
         slot = slots.get(slot_id) or {}
-        out[gid] = {
+        row = {
             "name": ctx.name(["mmorpg.gear_type." + gid], gid),
             "slot": slot_id,
             "slotName": ctx.name(["mmorpg.gearslot." + slot_id], slot_id),
@@ -705,6 +747,180 @@ def build_gear_types(ctx):
             "tags": sorted((g.get("tags") or {}).get("tags") or []),
             "baseStats": stat_list(g.get("base_stats")),
         }
+        # WeaponTypes, for the twelve gear types that are a weapon. `dual` is
+        # the mod's own one-handed flag - DualWieldUtils reads nothing else -
+        # and `range` its MELEE / RANGED / OPTIONALLY_RANGED class.
+        wep_id = g.get("weapon_type") or "none"
+        wep = weapons.get(wep_id)
+        if wep and wep_id not in regs.PLACEHOLDER_IDS:
+            row["weapon"] = {
+                "type": wep_id,
+                "dual": bool(wep.get("can_dual_wield")),
+                "range": wep.get("range") or "MELEE",
+                "projectile": bool(wep.get("isProjectile")),
+            }
+        out[gid] = row
+    return out
+
+
+# Display order for the slot categories. Only a slot holding more than one base
+# item becomes one, which in this pack is exactly the four armour slots, so the
+# order is head-to-toe. Nothing in the data supplies one: GearSlot.model_num is
+# a texture index and ties trident with hammer.
+SLOT_CATEGORY_ORDER = ("helmet", "chest", "pants", "boots")
+
+# SlotFamily, in the order the picker lists them. The names are the enum's own
+# (Armor, Jewelry - US spelling), hyphenated where the id runs two words.
+FAMILY_CATEGORY_ORDER = ("Armor", "Weapon", "OffHand", "Jewelry")
+FAMILY_CATEGORY_NAMES = {"OffHand": "Off-Hand"}
+
+# Tags that say *where* a gear type sits rather than what it is: the family
+# rows, the `*_stat` rows a slot contributes to, and the three attributes.
+_POSITIONAL_TAG_SUFFIXES = ("_family", "_stat", "_stat_half")
+_ATTRIBUTE_TAGS = ("strength", "dexterity", "intelligence")
+
+# `two_handed` is not the handedness tag it reads as. It is the pack's own
+# affix target and sits on greatsword, scythe and spear alone, while the game
+# asks WeaponTypes.can_dual_wield - which makes trident, bow and crossbow two
+# handed as well. Six, not three. So the weapon type answers handedness and
+# this tag is dropped, rather than shipping two picks that disagree.
+_SUPERSEDED_TAGS = ("two_handed",)
+
+
+def _trait_tags(gear_types, family, slot_ids):
+    """Tags naming what a gear type *is*, within one slot family.
+
+    Derived rather than listed, so a material the pack adds later files itself.
+    Everything positional goes - slot names, the `<material>_<slot>` composites
+    an affix targets, the family and stat rows, the attributes - and a tag that
+    survives on two or more gear types is the trait. That leaves exactly the
+    six armour materials and, on the weapons, mage / melee / ranged.
+    """
+    counts = collections.Counter()
+    for g in gear_types.values():
+        if g["family"] != family:
+            continue
+        for tag in g["tags"]:
+            if tag in slot_ids or tag in _ATTRIBUTE_TAGS:
+                continue
+            if tag in _SUPERSEDED_TAGS or tag.endswith(_POSITIONAL_TAG_SUFFIXES):
+                continue
+            if any(tag.endswith("_" + s) for s in slot_ids):
+                continue
+            counts[tag] += 1
+    return sorted(t for t, n in counts.items() if n >= 2)
+
+
+def build_gear_categories(ctx, gear_types):
+    """The "Any Chest" / "Any Two-Handed Weapon" picks, and who is in them.
+
+    The in-game wiki has no such filter - its slot list is one row per base
+    item, 43 of them - so this grouping is the site's own. It is still built
+    out of the game's own answers rather than a hand list: the slot family, the
+    gear slot, the trait tags above, and WeaponTypes for handedness and range.
+
+    Writes `cats` onto each gear type and returns the picker's rows in display
+    order. A category nothing matches is never emitted.
+    """
+    cats = collections.OrderedDict()
+    members = {}
+
+    def category(key, name, order, test):
+        hit = [gid for gid, g in gear_types.items() if test(g)]
+        if not hit:
+            return
+        cats[key] = {"key": key, "name": "Any " + name, "order": order}
+        members[key] = set(hit)
+
+    slot_ids = {g["slot"] for g in gear_types.values() if g["slot"]}
+    slot_size = collections.Counter(g["slot"] for g in gear_types.values())
+
+    for i, fam in enumerate(FAMILY_CATEGORY_ORDER):
+        category("fam_" + fam.lower(), FAMILY_CATEGORY_NAMES.get(fam, fam),
+                 10 + i, lambda g, fam=fam: g["family"] == fam)
+
+    # a slot holding a single base item says nothing the Base Item filter does
+    # not already say, so only the shared ones become a pick
+    def slot_rank(slot):
+        return (SLOT_CATEGORY_ORDER.index(slot) if slot in SLOT_CATEGORY_ORDER
+                else len(SLOT_CATEGORY_ORDER))
+
+    for slot in sorted((s for s in slot_ids if slot_size[s] > 1), key=slot_rank):
+        category("slot_" + slot, ctx.name(["mmorpg.gearslot." + slot], slot),
+                 20 + slot_rank(slot), lambda g, slot=slot: g["slot"] == slot)
+
+    for tag in _trait_tags(gear_types, "Armor", slot_ids):
+        category("tag_" + tag, ctx.name(["mmorpg.tag.gear_slot." + tag], tag),
+                 30, lambda g, tag=tag: tag in g["tags"])
+
+    # handedness from the weapon type, never from the `two_handed` tag
+    category("wep_1h", "One-Handed Weapon", 40,
+             lambda g: bool(g.get("weapon")) and g["weapon"]["dual"])
+    category("wep_2h", "Two-Handed Weapon", 40,
+             lambda g: bool(g.get("weapon")) and not g["weapon"]["dual"])
+    # OPTIONALLY_RANGED is the trident, and it really is both: the mod counts
+    # it as a two-handed melee weapon for a mercenary's reach and as non-melee
+    # in WeaponTypes.isMelee.
+    category("wep_melee", "Melee Weapon", 41,
+             lambda g: bool(g.get("weapon")) and g["weapon"]["range"] != "RANGED")
+    category("wep_ranged", "Ranged Weapon", 41,
+             lambda g: bool(g.get("weapon")) and g["weapon"]["range"] != "MELEE")
+    for tag in _trait_tags(gear_types, "Weapon", slot_ids):
+        if tag in ("melee_weapon", "ranged_weapon"):
+            continue    # the weapon type above already answers these
+        category("tag_" + tag, ctx.name(["mmorpg.tag.gear_slot." + tag], tag),
+                 42, lambda g, tag=tag: tag in g["tags"])
+
+    for gid, g in gear_types.items():
+        g["cats"] = [key for key, hit in members.items() if gid in hit]
+    return list(cats.values())
+
+
+def build_item_sets(ctx):
+    """The gear sets: (set id -> row, unique id -> the set it belongs to).
+
+    Membership is listed on the set and nowhere on the unique - ItemSet's own
+    comment says why: adding a set would otherwise restale every unique's json
+    - so the reverse map is built here the way `ItemSet.ofUnique` builds it.
+
+    Bonus tiers sort by piece count (getSortedBonuses) and are cumulative:
+    every tier at or below what you wear applies. Their stats are never rolled
+    - `SetBonus.getStats` asks for 100% every time - so a bonus is one number
+    rather than a range, and only the level moves it.
+    """
+    sets, owner = {}, {}
+    for entry_id, e in _entries(ctx, "item_set"):
+        members = [u for u in (e.get("uniques") or []) if u]
+        bonuses = []
+        for b in sorted((e.get("bonuses") or []),
+                        key=lambda x: _num(x.get("pieces"))):
+            stats = stat_list(b.get("stats"))
+            if stats:
+                bonuses.append({"pieces": _num(b.get("pieces")), "stats": stats})
+        if not members or not bonuses:
+            continue
+        sets[entry_id] = {
+            "name": ctx.name(["mmorpg.item_set." + entry_id], entry_id),
+            "uniques": members,
+            "bonuses": bonuses,
+        }
+        for unique_id in members:
+            owner[unique_id] = entry_id
+    return sets, owner
+
+
+def item_set_stats(balance):
+    """Stat ids only a set bonus mentions, so they get meta like any other.
+
+    The same hole `gear_type_stats` fills: `learn_slice` and `learn_bola_throw`
+    appear in no affix, unique or gem, so without this they miss
+    fill_code_stats and render at NONE scaling.
+    """
+    out = set()
+    for item_set in (balance.get("itemSets") or {}).values():
+        for bonus in item_set["bonuses"]:
+            for s in bonus["stats"]:
+                out.add(s["stat"])
     return out
 
 
@@ -849,7 +1065,13 @@ def build_balance(ctx):
         # max_lvl plus this, and gear is the only way past the natural cap.
         # The mod's default is 5; this pack ships 8.
         "maxBonusSpellLevels": balance.get("MAX_BONUS_SPELL_LEVELS", 5),
-        "gearTypes": build_gear_types(ctx),
+        "gearTypes": ctx.gear()[0],
+        # the site's own "Any Chest" / "Any Two-Handed Weapon" grouping over
+        # those, in display order - see build_gear_categories
+        "gearCategories": ctx.gear()[1],
+        # the diablo-style sets, which live in a registry of their own and are
+        # drawn under whichever unique belongs to one
+        "itemSets": ctx.item_sets()[0],
         # the Spells group's class filter: key -> display name and the pack's
         # own ordering, so the twelve player classes sort ahead of gear spells
         "spellClasses": ctx.classes()[0],

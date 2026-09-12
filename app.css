@@ -225,6 +225,29 @@ nav#rail {
 }
 .proc-link:hover { color: #ffc2c2; }
 
+/* the set a unique belongs to. Same nested-block language as a triggered
+   skill, in the set's own gold - the pieces are buttons because they are rows
+   of this same group and finding the next one by hand is the thing the block
+   exists to save. */
+.tl.set, .tl.set-piece, .tl.set-bonus {
+  border-left: 2px solid #6b5a30;
+  padding-left: 10px;
+}
+.tl.set { margin-top: 5px; }
+.tl.set, .tl.set-piece { display: flex; gap: 8px; flex-wrap: wrap; }
+.tl.set .set-name { color: #e8c86a; }
+.tl.set-piece .set-piece { font-size: 12px; }
+.tl.set-piece .eff-note { color: #6e7583; font-size: 12px; }
+.tl.set-piece .proc-link { color: #d8b45c; }
+.tl.set-piece .proc-link:hover { color: #f6dc9a; }
+/* the piece being looked at - named, but not a link back to itself */
+.tl.set-piece .here { color: #8b93a1; text-decoration: underline dotted; }
+.tl.set-bonus .set-tier {
+  color: #6e7583;
+  font-size: 12px;
+  margin-right: 6px;
+}
+
 .tl.chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   display: inline-block;

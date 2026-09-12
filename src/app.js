@@ -33,10 +33,16 @@ const RARITY_GROUPS = new Set(["aura", "supp_gem"]);
 // on, the way GroupFilterType.AFFIX_SLOTS works. `slot` is the raw tag rule
 // behind it, kept because several affix pools overlap on one item and the tag
 // is the only way to ask for one of them.
+// `cat` is the site's own grouping over the base items - "Any Chest", "Any
+// Two-Handed Weapon" - built in build_gear_categories and shipped on every
+// gear type. It rides alongside `gear`/`slot` rather than replacing them,
+// because the exact base item is still the question half the time.
 const FILTERS = {
-  affix: [["type", "Affix Type"], ["gear", "Base Item"], ["slot", "Tag"]],
-  unique_gear: [["slot", "Base Item"], ["league", "League"]],
-  runeword: [["runeCount", "Rune Count"], ["slot", "Slot"]],
+  affix: [["type", "Affix Type"], ["cat", "Category"],
+          ["gear", "Base Item"], ["slot", "Tag"]],
+  unique_gear: [["cat", "Category"], ["slot", "Base Item"],
+                ["set", "Set"], ["league", "League"]],
+  runeword: [["cat", "Category"], ["runeCount", "Rune Count"], ["slot", "Slot"]],
   spell: [["cls", "Class"], ["tag", "Tag"], ["style", "Style"]],
   effect: [["type", "Type"], ["tag", "Tag"]],
   supp_gem: [["style", "Style"]],
@@ -62,6 +68,8 @@ const state = {
   skillLvl: null,
   effects: null,        // id -> status effect row, for the skills that grant one
   spells: null,         // id -> spell row, for the skills a skill triggers
+  uniques: null,        // id -> unique row, for naming the pieces of a set
+  cats: null,           // gear category key -> {name, order}
   rarity: null,
   search: "",
   searchTooltips: false,
@@ -102,6 +110,9 @@ async function selectVersion(pack, selectId) {
   state.scaling = new Scaling(state.version.balance);
   state.effects = null;
   state.spells = null;
+  state.uniques = null;
+  state.cats = new Map((state.version.balance.gearCategories || [])
+    .map((c) => [c.key, c]));
   state.lvl = clampLevel(state.lvl);
   localStorage.setItem("cte2.version", pack);
   $("#version").value = pack;
@@ -139,6 +150,11 @@ async function selectGroup(key, selectId) {
   // a skill also draws the skills it triggers, and those are rows of this
   // same group - so this is an index of what is already loaded, not a fetch
   if (key === "spell") state.spells = new Map(state.rows.map((r) => [r.id, r]));
+  // a unique in a set names its siblings, and they are rows of this same
+  // group - an index of what is already loaded, not a fetch
+  if (key === "unique_gear") {
+    state.uniques = new Map(state.rows.map((r) => [r.id, r]));
+  }
   renderGroupRail();
   renderFilters();
   applyFilter();
@@ -236,6 +252,7 @@ function renderFilters() {
  * of gear spells, summons and mercenaries. Alphabetical would interleave them.
  */
 function filterOrder(dim, value) {
+  if (dim === "cat") return state.cats?.get(value)?.order ?? 0;
   if (dim !== "cls") return 0;
   return state.version?.balance?.spellClasses?.[value]?.order ?? 0;
 }
@@ -246,6 +263,8 @@ function filterLabel(dim, value) {
   if (dim === "cls") {
     return balance?.spellClasses?.[value]?.name || titleCase(value);
   }
+  if (dim === "cat") return state.cats?.get(value)?.name || titleCase(value);
+  if (dim === "set") return balance?.itemSets?.[value]?.name || titleCase(value);
   if (dim === "gear" || (dim === "slot" && state.group === "unique_gear")) {
     return gearTypeName(balance?.gearTypes, value);
   }
@@ -317,6 +336,7 @@ function tooltipFor(row) {
     skillLvl: state.skillLvl,
     effects: state.effects,
     spells: state.spells,
+    uniques: state.uniques,
   });
   entry = { stamp, lines, text: tooltipText(lines) };
   state.tooltipCache.set(row, entry);
@@ -365,13 +385,13 @@ function wireControls() {
     if (btn) select(state.filtered[Number(btn.dataset.i)]);
   });
 
-  // a triggered skill is named in the tooltip, one hop from the skill that
-  // sets it off - the rows are already the current group, so this is a
-  // selection and not a navigation
+  // an entry the tooltip names - the skill this one triggers, the other pieces
+  // of a set - is one hop away and already a row of the current group, so this
+  // is a selection and not a navigation
   $("#tip").addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-spell]");
+    const btn = e.target.closest("[data-entry]");
     if (!btn) return;
-    const row = state.rows.find((r) => r.id === btn.dataset.spell);
+    const row = state.rows.find((r) => r.id === btn.dataset.entry);
     if (row) select(row, { scroll: true });
   });
 

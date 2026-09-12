@@ -24,6 +24,11 @@ Pick a category on the left, click an entry, read its tooltip on the right.
 - **Filters** above the list narrow a category: affix type and which base item
   it rolls on, unique gear slot and league, rune count, spell class, tag and
   style, and so on.
+- **Category** is the coarse version of the base item pick, on affixes, uniques
+  and runewords: *Any Chest*, *Any Plate*, *Any Two-Handed Weapon*, *Any
+  Off-Hand* and so on, instead of picking through 43 base items one at a time.
+  Two-handed means what the game means by it, so bows, crossbows and tridents
+  are in there beside the greatswords.
 - **Auras and support gems** get a rarity picker, since their numbers roll
   inside a rarity's window.
 - The address bar follows along, so a link like
@@ -32,6 +37,12 @@ Pick a category on the left, click an entry, read its tooltip on the right.
 Spell damage reads the way the game writes it - a base number plus its scaling
 terms, like `36 +234% Weapon Damage` - because there is no character here to
 scale it against.
+
+A unique that belongs to a gear set draws the set underneath it: the other
+pieces, each a link to its own entry, and every bonus tier with the piece count
+it needs. Set bonuses are never rolled, so they are one number rather than a
+range - but the flat ones still follow the level box. Pick a **Set** in the
+filter row to see one set's pieces on their own.
 
 A skill that sets another one off draws it underneath, under **Triggers** -
 Banishing Blade's buff is what makes you apply Soul Wound, and that chain runs

@@ -315,9 +315,11 @@ def main(argv=None):
     balance = groupbuild.build_balance(ctx)
 
     # back-fill the stats only Java defines, and say so if any are still unknown.
-    # the gear bases are counted too - nothing else references weapon_damage
+    # the gear bases and the set bonuses are counted too - nothing else
+    # references weapon_damage, learn_slice or learn_bola_throw
     referenced = groupbuild.referenced_stats(built.values())
     referenced |= groupbuild.gear_type_stats(balance)
+    referenced |= groupbuild.item_set_stats(balance)
     from_datapack = len([s for s in referenced if s in balance["stats"]])
     unresolved = groupbuild.fill_code_stats(balance["stats"], referenced, code_stats)
     print(f"  stats          {len(referenced):5} referenced  "
