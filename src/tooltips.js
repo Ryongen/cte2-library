@@ -5,8 +5,9 @@
 // A line is { html, text, kind } - kind drives styling, text feeds search.
 
 import { toHtml, toPlain, colorOf, formatNumber } from "./mcfmt.js";
-import { renderStatMod, titleCase, resolveCalcs } from "./stats.js";
+import { renderStatMod, renderExactStat, titleCase, resolveCalcs } from "./stats.js";
 import { baseStatLines, gearTypesForAffix, gearTypeName } from "./gear.js";
+import { SkillLevel, leveledValue } from "./scaling.js";
 
 const blank = () => ({ html: "", text: "", kind: "blank" });
 const plain = (text, kind = "line") => ({
@@ -32,6 +33,14 @@ function title(text, color = "#ffff55") {
 function statLines(mods, ctx) {
   return (mods || []).map((m) => {
     const r = renderStatMod(m, ctx.lvl, ctx.scaling, ctx.lang, ctx.rarity);
+    return { html: r.html, text: r.text, kind: "stat" };
+  });
+}
+
+/** The same stats at one roll percent rather than as a range. */
+function exactStatLines(mods, percent, ctx) {
+  return (mods || []).map((m) => {
+    const r = renderExactStat(m, percent, ctx.lvl, ctx.scaling, ctx.lang);
     return { html: r.html, text: r.text, kind: "stat" };
   });
 }
@@ -158,10 +167,14 @@ const BUILDERS = {
   },
 
   spell(row, ctx) {
+    // a skill answers to two levels at once: the character's, which every
+    // FLAT stat and the mana curve scale with, and the gem's own rank, which
+    // decides where in each range the skill sits. `skill` is the second one
+    const skill = new SkillLevel(row, ctx.scaling, ctx.skillLvl);
     const out = [title(row.name, "#ff5555")];
     out.push(blank());
     if (row.desc) {
-      const resolved = resolveCalcs(row.desc, ctx.lvl, ctx.scaling, ctx.balance);
+      const resolved = resolveCalcs(row.desc, ctx.lvl, ctx.scaling, ctx.balance, skill);
       for (const part of resolved.split("[LINE]")) {
         if (part.trim()) out.push({
           html: toHtml("§7" + part.trim()), text: toPlain(part), kind: "desc",
@@ -169,9 +182,22 @@ const BUILDERS = {
       }
     }
     out.push(blank());
+    out.push(skillLevelLine(row, skill, ctx));
+    out.push(blank());
     const c = row.cfg || {};
-    if (c.manaMax > 0) out.push(costLine("Mana Cost", c.manaMin, c.manaMax, "#5555ff"));
-    if (c.eneMax > 0) out.push(costLine("Energy Cost", c.eneMin, c.eneMax, "#55ff55"));
+    // SpellStatsCalculationEvent: MANA_COST_SCALING at the caster's level
+    // times the cost's own walk up the gem's ranks, then truncated to an int
+    const multi = ctx.scaling.manaCostMulti(ctx.lvl);
+    const mana = Math.trunc(multi * leveledValue(c.manaMin, c.manaMax, skill.lvl, skill.maxLvl));
+    const ene = Math.trunc(multi * leveledValue(c.eneMin, c.eneMax, skill.lvl, skill.maxLvl));
+    if (mana > 0) out.push(costLine("Mana Cost", mana, "#5555ff"));
+    if (ene > 0) out.push(costLine("Energy Cost", ene, "#55ff55"));
+    // a Blood Mage pays both costs out of one blood pool. Worth a line only
+    // when there are two of them - on a skill with a single cost it would just
+    // repeat the number above it
+    if (mana > 0 && ene > 0) {
+      out.push(costLine("Blood Cost (Blood Mage)", mana + ene, "#aa0000"));
+    }
     if (c.charges > 0) {
       out.push(meta("Max Charges", c.charges));
       if (c.chargeRegen) out.push(meta("Charge Regen", ticksToSeconds(c.chargeRegen)));
@@ -186,16 +212,18 @@ const BUILDERS = {
     } else {
       out.push(meta("Cast Time", ticksToSeconds(c.castTime)));
     }
+    out.push(...effectLines(row, ctx, skill));
     if (row.stats?.length) {
       out.push(blank());
-      out.push(plain("Per Gem Level:"));
-      out.push(...statLines(row.stats, ctx));
+      out.push(plain(`Gem Stats at Level ${skill.lvl}:`, "sub"));
+      out.push(...exactStatLines(row.stats, skill.pct, ctx));
     }
     const chips = tagChips(row.tags);
     if (chips) { out.push(blank()); out.push(chips); }
     out.push(blank());
     if (c.weapon) out.push(meta("Weapon", titleCase(c.weapon)));
-    if (row.f?.maxLvl) out.push(meta("Max Gem Level", row.f.maxLvl));
+    if (row.f?.minLvl) out.push(meta("Requires Level", row.f.minLvl));
+    out.push(meta("Max Gem Level", `${skill.natural} (${skill.maxLvl} with gear)`));
     out.push(meta("Id", row.id));
     return out;
   },
@@ -274,13 +302,83 @@ function skillGem(row, ctx, kind) {
   return out;
 }
 
-function costLine(label, min, max, color) {
-  const value = min === max ? String(min) : `${min} - ${max}`;
+function costLine(label, value, color) {
   return {
     html: `<span class="k" style="color:${color}">${esc(label)}</span>`
       + `<span class="v">${esc(value)}</span>`,
     text: `${label} ${value}`, kind: "meta",
   };
+}
+
+/** The gem rank every number below is read at, and how far it can still go. */
+function skillLevelLine(row, skill, ctx) {
+  let value = `${skill.lvl} / ${skill.natural}`;
+  if (skill.lvl > skill.natural) {
+    value = `${skill.lvl} / ${skill.natural} (+${skill.lvl - skill.natural} from gear)`;
+  }
+  // Spell.getLevelOf hands the question to another skill when lvl_based_on_spell
+  // is set - this one has no rank of its own to raise
+  if (row.f?.lvlFrom) {
+    const from = toPlain(ctx.lang["mmorpg.spell." + row.f.lvlFrom])
+      || titleCase(row.f.lvlFrom);
+    value += ` · ranked by ${from}`;
+  }
+  return {
+    html: `<span class="k skill-lvl">Skill Level</span><span class="v">${esc(value)}</span>`,
+    text: `Skill Level ${value}`, kind: "meta",
+  };
+}
+
+/**
+ * The status effects a skill puts up, inline.
+ *
+ * The mod hides these behind shift and prints only the names plus a duration;
+ * this shows the stats too, because the whole point of the section is not
+ * having to go and find the effect in another list. They are the same numbers
+ * the effect's own entry shows, read at one point instead of as a range:
+ * ExileEffect.getExactStats rolls them at `LeveledValue(0, 100)` over the
+ * *casting skill's* rank, so a rank 20 buff grants 71% of its span and the
+ * page would be lying if it showed the full one here.
+ */
+function effectLines(row, ctx, skill) {
+  const applied = row.effects || [];
+  if (!applied.length || !ctx.effects) return [];
+  const out = [];
+  for (const group of [["give", "Applies:"], ["take", "Removes:"]]) {
+    const [act, label] = group;
+    const some = applied.filter((e) => e.act === act && ctx.effects.get(e.id));
+    if (!some.length) continue;
+    out.push(blank());
+    out.push(plain(label, "sub"));
+    for (const ref of some) out.push(...effectEntry(ref, ctx, skill, act));
+  }
+  return out;
+}
+
+function effectEntry(ref, ctx, skill, act) {
+  const effect = ctx.effects.get(ref.id);
+  const color = effect.f?.type === "negative" ? "#ff5555" : "#55ff55";
+  const notes = [];
+  if (act === "give") {
+    notes.push(ref.self ? "on self" : "on target");
+    if (ref.dur > 0) notes.push(ticksToSeconds(ref.dur));
+    else if (ref.dur < 0) notes.push("permanent");
+    if (ref.count > 1) notes.push(`${ref.count} stacks`);
+    if (effect.f?.maxStacks > 1) notes.push(`stacks to ${effect.f.maxStacks}`);
+  } else {
+    notes.push(ref.all ? "all stacks"
+      : ref.count > 1 ? `${ref.count} stacks` : "1 stack");
+  }
+  if (ref.chance != null) notes.push(`${Math.round(ref.chance)}% chance`);
+
+  const head = {
+    html: `<span class="eff-name" style="color:${color}">${esc(effect.name)}</span>`
+      + (notes.length ? `<span class="eff-note">${esc(notes.join(" · "))}</span>` : ""),
+    text: `${effect.name} ${notes.join(" ")}`, kind: "eff",
+  };
+  if (act === "take") return [head];
+  return [head, ...exactStatLines(effect.stats, skill.pct, ctx)
+    .map((l) => ({ ...l, kind: "stat sub-stat" }))];
 }
 
 /** A slot tag's display name: `mmorpg.tag.gear_slot.<tag>`. */

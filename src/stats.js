@@ -11,6 +11,7 @@
 // it is reproduced rather than tidied up.
 
 import { toHtml, toPlain, formatNumber, stripLinks } from "./mcfmt.js";
+import { leveledValue } from "./scaling.js";
 
 const VAL1 = "[VAL1]";
 const GREEN = "§a";
@@ -66,25 +67,66 @@ export function renderStatMod(mod, lvl, scaling, lang, rarity = null) {
                            : word(lang, "multiplicative_damage_less", "Less"));
   }
 
-  const label = name || titleCase(mod.stat);
-  let body;
-  if (type === "MORE") {
-    const w = lo > 0 ? word(lang, "multiplicative_damage_more", "More")
-                     : word(lang, "multiplicative_damage_less", "Less");
-    body = w + " " + label;
-  } else if (type === "PERCENT" && meta?.percent) {
-    // BasicStatRegex: a percent modifier on an already-percent stat reads
-    // "Increased"/"Reduced" rather than stacking a second % sign
-    const w = lo > 0 ? word(lang, "multiply_stat_increased", "Increased")
-                     : word(lang, "multiply_stat_reduced", "Reduced");
-    body = w + " " + label;
-  } else {
-    body = label;
-  }
+  const body = statBody(type, meta, lang, name || titleCase(mod.stat), lo > 0);
 
   const html = `<span class="range">${escapeText(range)}</span> `
     + toHtml(GRAY + body);
   return { html, text: `${range} ${toPlain(body)}` };
+}
+
+/** BasicStatRegex's [STAT_NAME] half - the text that follows the number. */
+function statBody(type, meta, lang, label, positive) {
+  if (type === "MORE") {
+    return (positive ? word(lang, "multiplicative_damage_more", "More")
+                     : word(lang, "multiplicative_damage_less", "Less"))
+      + " " + label;
+  }
+  if (type === "PERCENT" && meta?.percent) {
+    // a percent modifier on an already-percent stat reads "Increased" /
+    // "Reduced" rather than stacking a second % sign
+    return (positive ? word(lang, "multiply_stat_increased", "Increased")
+                     : word(lang, "multiply_stat_reduced", "Reduced"))
+      + " " + label;
+  }
+  return label;
+}
+
+/**
+ * Render one modifier as the single value a given roll percent lands on.
+ *
+ * This is ExactStatData.fromStatModifier -> BasicStatRegex with showNumber
+ * left on, the path a real item takes, rather than StatMod.getEstimationTooltip
+ * with its "(lo -> hi)" range. A skill gem's stats need it because the gem's
+ * rank *is* the percent: at rank 20 of 28 the number is not a range at all,
+ * it is 71% of the way up one.
+ *
+ * Long stats differ here from the range path in a way that looks like a bug on
+ * both sides and is faithful to each. getEstimationTooltip returns before any
+ * scaling, so it prints the raw `min`; fromStatModifier runs scaleToLevel
+ * before the sentence is filled, so the number in the hole *is* level-scaled.
+ */
+export function renderExactStat(mod, percent, lvl, scaling, lang) {
+  const meta = scaling.statMeta(mod.stat);
+  const type = String(mod.type || "FLAT").toUpperCase();
+  const name = statText(lang, mod.stat);
+
+  const rolled = mod.min + ((mod.max - mod.min) * percent) / 100;
+  const value = scaling.scale(mod.stat, type, rolled, lvl);
+  const plus = value > 0 ? "+" : "";
+  const isPercent = Boolean(meta?.percent) || type === "PERCENT" || type === "MORE";
+
+  if (isLong(lang, mod.stat, meta)) {
+    const filled = (name || mod.stat).split(VAL1)
+      .join(GREEN + plus + formatNumber(value) + GRAY);
+    return { html: toHtml(GRAY + filled), text: toPlain(filled) };
+  }
+
+  const shown = `${plus}${formatNumber(value)}${isPercent ? "%" : ""}`;
+  const body = statBody(type, meta, lang, name || titleCase(mod.stat), value > 0);
+  return {
+    html: `<span class="range">${escapeText(shown)}</span> ` + toHtml(GRAY + body),
+    text: `${shown} ${toPlain(body)}`,
+  };
 }
 
 /**
@@ -122,20 +164,28 @@ export function titleCase(id) {
     .map((p) => p[0].toUpperCase() + p.slice(1)).join(" ");
 }
 
-/** Resolve `[calc:id]` holes in a spell description. */
-export function resolveCalcs(desc, lvl, scaling, balance) {
+/**
+ * Resolve `[calc:id]` holes in a spell description.
+ *
+ * Both halves of a ValueCalculation are LeveledValues handed the Spell as
+ * their MaxLevelProvider - the flat base and every stat proportion - so they
+ * walk with the *gem's* rank. Only the curve on top of the base reads the
+ * character's level. Feeding the character's level into the walk instead makes
+ * a skill look like it gains from levelling when it gains from ranking up.
+ */
+export function resolveCalcs(desc, lvl, scaling, balance, skill) {
   const calcs = balance?.valueCalcs || {};
   return stripLinks(String(desc || "")).replace(
     /\[calc:([a-z0-9_]+)\]/gi,
     (whole, id) => {
       const calc = calcs[id];
       if (!calc) return whole;
-      const base = Math.trunc(scaling.calcBase(calc, lvl));
+      const base = Math.trunc(scaling.calcBase(calc, lvl, skill));
       const parts = [`§a${base}§7`];
       for (const s of calc.scalings || []) {
         if (!s.stat) continue;
-        const pct = Math.round((s.min === s.max ? s.min
-          : s.min + ((s.max - s.min) / scaling.maxLevel) * lvl) * 100);
+        const pct = Math.round(
+          leveledValue(s.min, s.max, skill.lvl, skill.maxLvl) * 100);
         parts.push(`§b+${pct}% ${titleCase(s.stat)}§7`);
       }
       return parts.join(" ");

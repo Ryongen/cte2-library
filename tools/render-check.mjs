@@ -22,7 +22,10 @@ const read = (...p) => JSON.parse(readFileSync(join(REPO, "data", version, ...p)
 const lang = read("lang.json");
 const balance = read("balance.json");
 const scaling = new Scaling(balance);
-const ctx = { lvl, lang, balance, scaling };
+// a skill's tooltip shows the effects it puts up, which live in their own group
+const effects = new Map(read("groups", "effect.json").rows.map((r) => [r.id, r]));
+// null skillLvl is "each skill at its own natural max", the page's default
+const ctx = { lvl, lang, balance, scaling, effects, skillLvl: null };
 
 // one representative entry per group, plus extra affixes since they are the
 // most numerous and the most formula-sensitive

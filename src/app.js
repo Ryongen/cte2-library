@@ -6,7 +6,7 @@
 // tooltip, built at the level currently in the box.
 
 import { loadVersions, loadVersion, loadGroup, iconUrl } from "./data.js";
-import { Scaling, MIN_LEVEL } from "./scaling.js";
+import { Scaling, SkillLevel, MIN_LEVEL } from "./scaling.js";
 import { buildTooltip, tooltipText } from "./tooltips.js";
 import { titleCase } from "./stats.js";
 import { indexAffixGear, gearTypeName } from "./gear.js";
@@ -56,6 +56,11 @@ const state = {
   filtered: [],
   selected: null,
   lvl: MIN_LEVEL,
+  // a skill gem's own rank. null means "whatever this skill's natural max is",
+  // which is the answer people actually want and is per-entry, so it cannot be
+  // a number in the box until someone types one
+  skillLvl: null,
+  effects: null,        // id -> status effect row, for the skills that grant one
   rarity: null,
   search: "",
   searchTooltips: false,
@@ -82,6 +87,8 @@ async function boot() {
   if (params.get("g")) state.group = params.get("g");
   const lvl = parseInt(params.get("lvl"), 10);
   if (Number.isFinite(lvl)) state.lvl = lvl;
+  const slvl = parseInt(params.get("slvl"), 10);
+  if (Number.isFinite(slvl)) state.skillLvl = slvl;
 
   renderVersionPicker();
   renderGroupRail();
@@ -92,6 +99,7 @@ async function boot() {
 async function selectVersion(pack, selectId) {
   state.version = await loadVersion(pack);
   state.scaling = new Scaling(state.version.balance);
+  state.effects = null;
   state.lvl = clampLevel(state.lvl);
   localStorage.setItem("cte2.version", pack);
   $("#version").value = pack;
@@ -119,6 +127,13 @@ async function selectGroup(key, selectId) {
   // the affix -> base item mapping is a join across two files, so it is done
   // once here rather than per row on every keystroke
   if (key === "affix") indexAffixGear(state.rows, state.version.balance.gearTypes);
+  // a skill shows the buff it puts up, and the effect rows are where those
+  // stats live - one extra fetch for the one group that needs it, rather than
+  // a copy of every effect baked into every skill that grants it
+  if (key === "spell" && !state.effects) {
+    const effects = await loadGroup(state.version, "effect");
+    state.effects = new Map((effects.rows || []).map((r) => [r.id, r]));
+  }
   renderGroupRail();
   renderFilters();
   applyFilter();
@@ -128,7 +143,7 @@ async function selectGroup(key, selectId) {
   const wanted = selectId && state.rows.find((r) => r.id === selectId);
   const row = wanted || state.filtered[0];
   if (row) select(row, { scroll: Boolean(wanted) });
-  else renderTooltip();
+  else { renderSkillLevel(); renderTooltip(); }
   syncUrl();
 }
 
@@ -164,6 +179,25 @@ function renderRarityPicker() {
     ${picks.map((rid) => `<option value="${esc(rid)}"${
       rid === state.rarity ? " selected" : ""}>${esc(rarities[rid]?.name || rid)}</option>`).join("")}
   </select>`;
+}
+
+/**
+ * The skill-level box, for the one group whose entries have a level of their
+ * own. Its max is the *selected* skill's ceiling, because that is per entry -
+ * a stance caps at 4 (12 with gear) where a spell caps at 20 (28). The typed
+ * value is kept across selections and clamped for display, so stepping through
+ * a class's skills at "rank 20" does not silently reset to something else.
+ */
+function renderSkillLevel() {
+  const host = $("#skill-ctl");
+  const box = $("#skill-level");
+  if (state.group !== "spell") { host.hidden = true; return; }
+  host.hidden = false;
+  const skill = state.selected
+    ? new SkillLevel(state.selected, state.scaling, state.skillLvl) : null;
+  box.max = skill ? String(skill.maxLvl) : "";
+  box.placeholder = skill ? `max ${skill.natural}` : "max";
+  box.value = state.skillLvl == null ? "" : String(skill ? skill.lvl : state.skillLvl);
 }
 
 function renderFilters() {
@@ -251,7 +285,7 @@ function currentRarity() {
 }
 
 function tooltipFor(row) {
-  const stamp = `${state.lvl}|${state.rarity || ""}`;
+  const stamp = `${state.lvl}|${state.rarity || ""}|${state.skillLvl ?? ""}`;
   let entry = state.tooltipCache.get(row);
   if (entry && entry.stamp === stamp) return entry;
   const lines = buildTooltip(state.group, row, {
@@ -260,6 +294,8 @@ function tooltipFor(row) {
     balance: state.version.balance,
     scaling: state.scaling,
     rarity: currentRarity(),
+    skillLvl: state.skillLvl,
+    effects: state.effects,
   });
   entry = { stamp, lines, text: tooltipText(lines) };
   state.tooltipCache.set(row, entry);
@@ -269,6 +305,7 @@ function tooltipFor(row) {
 function select(row, { scroll = false } = {}) {
   state.selected = row;
   renderList();
+  renderSkillLevel();
   renderTooltip();
   if (scroll) {
     // a deep-linked entry can be thousands of rows down; put it on screen
@@ -341,6 +378,17 @@ function wireControls() {
     syncUrl();
   });
 
+  $("#skill-level").addEventListener("input", (e) => {
+    // an empty box is not zero - it means "this skill's natural max", which is
+    // a different number for every entry and so cannot be typed once
+    const v = parseInt(e.target.value, 10);
+    state.skillLvl = Number.isFinite(v) ? Math.max(v, 0) : null;
+    state.tooltipCache = new WeakMap();
+    renderTooltip();
+    if (state.search && state.searchTooltips) applyFilter();
+    syncUrl();
+  });
+
   $("#version").addEventListener("change", (e) => selectVersion(e.target.value));
 }
 
@@ -349,6 +397,7 @@ function syncUrl() {
   p.set("v", state.version.pack);
   p.set("g", state.group);
   if (state.lvl !== MIN_LEVEL) p.set("lvl", String(state.lvl));
+  if (state.skillLvl != null) p.set("slvl", String(state.skillLvl));
   if (state.selected) p.set("id", state.selected.id);
   history.replaceState(null, "", `?${p}`);
 }
