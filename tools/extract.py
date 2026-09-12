@@ -169,6 +169,55 @@ def write_json(path, obj, compact=True):
     return os.path.getsize(path)
 
 
+def no_pack_layer_message(where):
+    """Why building from mod jars alone is refused rather than warned about.
+
+    CTE2's openloader datapacks are not a tuning layer, they are most of the
+    content: affixes 505 against the jar's 212, spells 570 against 120,
+    uniques 480 against 51. A jar-only build still produces all 11 groups, all
+    of them populated, and a site that looks finished - under the wrong names
+    for roughly a quarter of the game. Nothing downstream can tell, which is
+    why this is the only place it can be caught.
+
+    Deliberately structural: it asks whether the override layer is there at
+    all, never whether a count matches a number remembered from an earlier
+    pack version. A pinned number would be wrong the next time the pack
+    updates, and wrong in the direction that cries wolf until it is ignored.
+    """
+    return (
+        f"no openloader data under {where}\n"
+        "    This would build the site from mod jars alone. That still fills "
+        "every group and looks\n"
+        "    complete, with about a quarter of the game under the wrong names "
+        "- the pack overrides\n"
+        "    are most of the content, not a tuning layer.\n"
+        "    Point --instance at the 'minecraft' dir holding mods/ and "
+        "config/openloader/, or pass\n"
+        "    --allow-jar-only if a bare Mine and Slash install is really what "
+        "you want.")
+
+
+def jar_only_message(labels):
+    """The same failure, one group at a time.
+
+    The layer loaded, but a group came back with nothing from the pack. That is
+    what a renamed or moved registry directory looks like from here, and the
+    pack does reorganise - it already ships `mmorpg_map_mob_list - obsolete`
+    and a typo'd `mmorph_shrine_buff` beside the real folders. Softer than the
+    check above, because a pack could legitimately stop overriding a group: a
+    non-zero exit with an explanation rather than a refusal to write.
+    """
+    return (
+        "\n! built from the jar alone: " + ", ".join(labels) + "\n"
+        "  Every group here is normally mostly pack data, so zero pack rows "
+        "usually means that\n"
+        "  registry's folder was renamed or moved under "
+        "config/openloader/data/*/data/mmorpg/.\n"
+        "  Check tools/registries.py against the instance before publishing "
+        "this bundle.\n"
+        "  Pass --allow-jar-only to accept it.")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -177,6 +226,9 @@ def main(argv=None):
     ap.add_argument("--instance", help="instance dir holding mods/ and config/openloader/")
     ap.add_argument("--out", help="output root (default: <repo>/data)")
     ap.add_argument("--pretty", action="store_true", help="indent the JSON (debugging)")
+    ap.add_argument("--allow-jar-only", action="store_true",
+                    help="build even when the pack's openloader overrides are "
+                         "missing - see no_pack_layer_message, almost never what you want")
     args = ap.parse_args(argv)
 
     if not args.instance:
@@ -200,7 +252,13 @@ def main(argv=None):
     if not data_sources:
         ap.error("no mod jars or openloader data found - is this the 'minecraft' dir?")
 
-    print(f"sources:  {len(data_sources)} data, {len(asset_sources)} asset")
+    pack_sources = [x for x in data_sources if x.name.startswith("openloader")]
+    if not pack_sources and not args.allow_jar_only:
+        ap.error(no_pack_layer_message(
+            os.path.join(args.instance, "config", "openloader", "data")))
+
+    print(f"sources:  {len(data_sources)} data, {len(asset_sources)} asset"
+          + (f"  ({len(pack_sources)} from the pack)" if pack_sources else ""))
     for modid, ver in sorted(mod_versions.items()):
         print(f"          {modid} {ver}")
 
@@ -232,6 +290,7 @@ def main(argv=None):
     counts = {}
     total_bytes = 0
     built = {}
+    jar_only = []
     print("\ngroups:")
     for key, label, icon in regs.GROUP_ORDER:
         rows = groupbuild.build(key, ctx)
@@ -242,7 +301,10 @@ def main(argv=None):
                           compact=not args.pretty)
         total_bytes += size
         over = sum(1 for r in rows if r.get("src", "").startswith("openloader"))
-        print(f"  {label:16} {len(rows):5}  ({over} from pack)  {size/1024:7.1f} KB")
+        if not over:
+            jar_only.append(label)
+        print(f"  {label:16} {len(rows):5}  ({over} from pack)  {size/1024:7.1f} KB"
+              + ("   <- JAR ONLY" if not over else ""))
 
     # --- shared tables
     size = write_json(os.path.join(version_dir, "lang.json"), prune_lang(lang),
@@ -290,6 +352,10 @@ def main(argv=None):
     update_version_index(out_root, version, meta)
 
     print(f"\ntotal: {total_bytes/1024/1024:.2f} MB -> {version_dir}")
+
+    if jar_only and not args.allow_jar_only:
+        print(jar_only_message(jar_only))
+        return 1
     return 0
 
 
