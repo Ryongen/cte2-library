@@ -203,46 +203,25 @@ def _folder_sort(folder):
 
 
 def spell_classes(ctx):
-    """(class key -> {name, order}, spell id -> class key) for the Spells filter.
-
-    `mmorpg_spells` is one folder per class and the folder is the better
-    answer than the class tree alone: `mmorpg_spell_school` lists only the
-    skills a class *grants*, so Soul Wound, Rip Apart and every other
-    sub-spell a skill casts belongs to no school at all while sitting in its
-    class's folder. Every live spell but the six in the jar has one.
-
-    The school registry is still needed for the name, because a folder is
-    named for what the class is *called* and not for its id - `0_10_fighter`
-    is the school `warrior` and `0_8_elementalist` is `sorcerer`. A school's
-    own skills say which folder is that school's, which is why this is a
-    count rather than a string match.
-    """
+    """(class key -> {name, order}, spell id -> class key) for the Spells filter."""
     folder_of = {}
     for spell_id, e in (ctx.reg.get("spell") or {}).items():
         path = e.get("_path") or ""
         if "/" in path:
             folder_of[spell_id] = path.split("/", 1)[0]
 
-    school_of = {}
-    for school_id, school in sorted((ctx.reg.get("spell_school") or {}).items()):
-        seen = collections.Counter(
-            folder_of[p] for p in (school.get("perks") or {}) if p in folder_of)
-        if seen:
-            school_of.setdefault(seen.most_common(1)[0][0], school_id)
-
     classes, key_of = {}, {}
     for folder in sorted(set(folder_of.values()), key=_folder_sort):
-        school = school_of.get(folder)
         bare = _CLASS_FOLDER.sub("", folder)
-        key = school or bare
+        key = bare
         classes[key] = {
-            "name": (ctx.name(["mmorpg.asc_class." + school], bare) if school
-                     else title_case(bare)),
+            "name": ctx.name(["mmorpg.asc_class." + bare], title_case(bare)),
             # the numeric prefix is the pack's grouping - the twelve player
             # classes, then gear spells, then summons, then mercenaries
             "order": len(classes),
         }
         key_of[folder] = key
+
     return classes, {sid: key_of[f] for sid, f in folder_of.items()}
 
 
