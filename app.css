@@ -16,6 +16,11 @@
 
 * { box-sizing: border-box; }
 
+/* .ctl and .filter are display:flex, which outranks the UA's
+   [hidden] { display: none } - without this the rarity picker and the
+   skill-level box stay on screen for every group. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
