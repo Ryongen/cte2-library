@@ -200,6 +200,26 @@ nav#rail {
 .tl.eff .eff-note { color: #6e7583; font-size: 12px; }
 .tl.sub-stat { padding-left: 14px; }
 
+/* a skill this one triggers. The rail runs down the head line and everything
+   under it so the block reads as one nested entry rather than three loose
+   lines - the chain that leads here crosses three registries and the in-game
+   screen draws none of it. */
+.tl.proc, .tl.proc-body { border-left: 2px solid #6b3040; padding-left: 10px; }
+.tl.proc { margin-top: 5px; }
+.tl.proc-body { color: #9aa1ad; }
+
+.proc-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: #ff8f8f;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.proc-link:hover { color: #ffc2c2; }
+
 .tl.chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   display: inline-block;

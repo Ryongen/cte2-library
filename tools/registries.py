@@ -70,6 +70,13 @@ SUPPORT_REGISTRIES = {
     "gear_slot":    Registry("mmorpg", "mmorpg_gear_slot", ID),
     "gear_type":    Registry("mmorpg", "mmorpg_base_gear_types", GUID),
     "item_set":     Registry("mmorpg", "mmorpg_sets", ID),
+    # what a stat *does*, not how it scales. The `proc_spell` ones name a
+    # spellId, which is the only link between a stat like `proc_soul_wound`
+    # and the skill it actually casts.
+    "stat_effect":  Registry("mmorpg", "mmorpg_stat_effect", ID),
+    # the class trees. Their `perks` lists are what says which class a skill
+    # belongs to - the spell folder names are display names, not ids.
+    "spell_school": Registry("mmorpg", "mmorpg_spell_school", ID),
 }
 
 ALL_REGISTRIES = dict(GROUP_REGISTRIES)

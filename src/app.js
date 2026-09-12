@@ -37,7 +37,7 @@ const FILTERS = {
   affix: [["type", "Affix Type"], ["gear", "Base Item"], ["slot", "Tag"]],
   unique_gear: [["slot", "Base Item"], ["league", "League"]],
   runeword: [["runeCount", "Rune Count"], ["slot", "Slot"]],
-  spell: [["tag", "Tag"], ["style", "Style"]],
+  spell: [["cls", "Class"], ["tag", "Tag"], ["style", "Style"]],
   effect: [["type", "Type"], ["tag", "Tag"]],
   supp_gem: [["style", "Style"]],
   aura: [["style", "Style"]],
@@ -61,6 +61,7 @@ const state = {
   // a number in the box until someone types one
   skillLvl: null,
   effects: null,        // id -> status effect row, for the skills that grant one
+  spells: null,         // id -> spell row, for the skills a skill triggers
   rarity: null,
   search: "",
   searchTooltips: false,
@@ -100,6 +101,7 @@ async function selectVersion(pack, selectId) {
   state.version = await loadVersion(pack);
   state.scaling = new Scaling(state.version.balance);
   state.effects = null;
+  state.spells = null;
   state.lvl = clampLevel(state.lvl);
   localStorage.setItem("cte2.version", pack);
   $("#version").value = pack;
@@ -134,6 +136,9 @@ async function selectGroup(key, selectId) {
     const effects = await loadGroup(state.version, "effect");
     state.effects = new Map((effects.rows || []).map((r) => [r.id, r]));
   }
+  // a skill also draws the skills it triggers, and those are rows of this
+  // same group - so this is an index of what is already loaded, not a fetch
+  if (key === "spell") state.spells = new Map(state.rows.map((r) => [r.id, r]));
   renderGroupRail();
   renderFilters();
   applyFilter();
@@ -213,8 +218,8 @@ function renderFilters() {
     }
     if (!values.size) return "";
     const opts = [...values]
-      .map((v) => [v, filterLabel(dim, v)])
-      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map((v) => [v, filterLabel(dim, v), filterOrder(dim, v)])
+      .sort((a, b) => a[2] - b[2] || a[1].localeCompare(b[1]))
       .map(([v, text]) =>
         `<option value="${esc(v)}">${esc(text)}</option>`).join("");
     return `<label class="filter"><span>${label}</span>
@@ -223,9 +228,24 @@ function renderFilters() {
   }).join("");
 }
 
+/**
+ * A dimension's own ordering, where the data carries one.
+ *
+ * Class is the only dimension that does: the pack numbers its spell folders
+ * (`0_1_brawler` ... `3_1_wizard`), which puts the twelve player classes ahead
+ * of gear spells, summons and mercenaries. Alphabetical would interleave them.
+ */
+function filterOrder(dim, value) {
+  if (dim !== "cls") return 0;
+  return state.version?.balance?.spellClasses?.[value]?.order ?? 0;
+}
+
 /** A filter value's display text - ids that lang can name, get named. */
 function filterLabel(dim, value) {
   const balance = state.version?.balance;
+  if (dim === "cls") {
+    return balance?.spellClasses?.[value]?.name || titleCase(value);
+  }
   if (dim === "gear" || (dim === "slot" && state.group === "unique_gear")) {
     return gearTypeName(balance?.gearTypes, value);
   }
@@ -296,6 +316,7 @@ function tooltipFor(row) {
     rarity: currentRarity(),
     skillLvl: state.skillLvl,
     effects: state.effects,
+    spells: state.spells,
   });
   entry = { stamp, lines, text: tooltipText(lines) };
   state.tooltipCache.set(row, entry);
@@ -342,6 +363,16 @@ function wireControls() {
   $("#list").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-i]");
     if (btn) select(state.filtered[Number(btn.dataset.i)]);
+  });
+
+  // a triggered skill is named in the tooltip, one hop from the skill that
+  // sets it off - the rows are already the current group, so this is a
+  // selection and not a navigation
+  $("#tip").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-spell]");
+    if (!btn) return;
+    const row = state.rows.find((r) => r.id === btn.dataset.spell);
+    if (row) select(row, { scroll: true });
   });
 
   $("#filters").addEventListener("change", (e) => {

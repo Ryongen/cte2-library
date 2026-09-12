@@ -24,8 +24,10 @@ const balance = read("balance.json");
 const scaling = new Scaling(balance);
 // a skill's tooltip shows the effects it puts up, which live in their own group
 const effects = new Map(read("groups", "effect.json").rows.map((r) => [r.id, r]));
+// and the skills it triggers, which are rows of the spell group itself
+const spells = new Map(read("groups", "spell.json").rows.map((r) => [r.id, r]));
 // null skillLvl is "each skill at its own natural max", the page's default
-const ctx = { lvl, lang, balance, scaling, effects, skillLvl: null };
+const ctx = { lvl, lang, balance, scaling, effects, spells, skillLvl: null };
 
 // one representative entry per group, plus extra affixes since they are the
 // most numerous and the most formula-sensitive

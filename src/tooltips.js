@@ -159,6 +159,13 @@ const BUILDERS = {
     if (chips) out.push(chips);
     out.push(blank());
     out.push(...statLines(row.stats, ctx));
+    // the stat line above says "Chance to Cast Soul Wound"; this says which
+    // entry that is, since the stat's sentence is prose and not a link
+    if (row.procs?.length) {
+      out.push(blank());
+      out.push(plain("Triggers: "
+        + row.procs.map((id) => spellName(ctx, id)).join(", "), "sub"));
+    }
     out.push(blank());
     if (row.f?.maxStacks > 1) out.push(meta("Max Stacks", row.f.maxStacks));
     if (row.f?.type) out.push(meta("Type", titleCase(row.f.type)));
@@ -170,7 +177,7 @@ const BUILDERS = {
     // a skill answers to two levels at once: the character's, which every
     // FLAT stat and the mana curve scale with, and the gem's own rank, which
     // decides where in each range the skill sits. `skill` is the second one
-    const skill = new SkillLevel(row, ctx.scaling, ctx.skillLvl);
+    const skill = skillLevelFor(row, ctx);
     const out = [title(row.name, "#ff5555")];
     out.push(blank());
     if (row.desc) {
@@ -212,6 +219,16 @@ const BUILDERS = {
     } else {
       out.push(meta("Cast Time", ticksToSeconds(c.castTime)));
     }
+    // ProcSpellEffect keeps a triggered cast on its own cooldown key, read
+    // straight off the config - neither Cast Speed nor Cooldown Reduction
+    // moves it, and 0 means no limit at all. Every spell carries the field
+    // and on most of them nothing ever reads it, so this asks whether
+    // anything can proc this skill rather than printing the number on all
+    // 309 the way the mod's shift tooltip does.
+    if (row.f?.proccable) {
+      out.push(meta("Proc Recharge",
+        c.procCd > 0 ? ticksToSeconds(c.procCd) : "no limit"));
+    }
     out.push(...effectLines(row, ctx, skill));
     if (row.stats?.length) {
       out.push(blank());
@@ -225,6 +242,7 @@ const BUILDERS = {
     if (row.f?.minLvl) out.push(meta("Requires Level", row.f.minLvl));
     out.push(meta("Max Gem Level", `${skill.natural} (${skill.maxLvl} with gear)`));
     out.push(meta("Id", row.id));
+    out.push(...procLines(row, ctx));
     return out;
   },
 
@@ -379,6 +397,105 @@ function effectEntry(ref, ctx, skill, act) {
   if (act === "take") return [head];
   return [head, ...exactStatLines(effect.stats, skill.pct, ctx)
     .map((l) => ({ ...l, kind: "stat sub-stat" }))];
+}
+
+/**
+ * A skill's rank, following `lvl_based_on_spell` to whichever skill owns it.
+ *
+ * Spell.getLevelOf hands the question straight to the other spell - Soul Wound
+ * has no rank of its own, Banishing Blade's rank *is* its rank - while
+ * Spell.getStats still divides by *this* spell's ceiling. So the two halves of
+ * one percent come from two rows and only the level is borrowed. The pack's 17
+ * pairs happen to share a max_lvl, so nothing moves today; the borrowed rank is
+ * clamped to this skill's own ceiling in case one ever stops sharing it.
+ */
+function skillLevelFor(row, ctx) {
+  const from = row.f?.lvlFrom ? ctx.spells?.get(row.f.lvlFrom) : null;
+  // Spell.getLevelOf's own guard against a pair pointing at each other
+  if (!from || from.f?.lvlFrom === row.f.lvlFrom) {
+    return new SkillLevel(row, ctx.scaling, ctx.skillLvl);
+  }
+  const source = new SkillLevel(from, ctx.scaling, ctx.skillLvl);
+  return new SkillLevel(row, ctx.scaling, source.lvl);
+}
+
+/**
+ * The skills this one sets off, drawn under it.
+ *
+ * The wiki screen draws none of this, and the chain it skips is three hops
+ * long: Banishing Blade grants the Banishing Blade buff, the buff carries
+ * `proc_soul_wound`, and that stat casts the Soul Wound skill. The buff's own
+ * line says "80% Chance to Cast Soul Wound" and then leaves you to find Soul
+ * Wound in a list of three hundred - which is the whole reason its numbers are
+ * worth inlining here rather than named and linked.
+ *
+ * Deliberately one level deep. A triggered skill can carry a proc stat of its
+ * own, and following those would nest a tooltip inside a tooltip; the name is
+ * a button, so the next hop is a click.
+ */
+function procLines(row, ctx) {
+  if (!ctx.spells) return [];
+  // a skill is not news to itself - Cinder's buff procs Cinder
+  const seen = new Set([row.id]);
+  const found = [];
+  const add = (id, via) => {
+    const spell = ctx.spells.get(id);
+    if (!spell || seen.has(id)) return;
+    seen.add(id);
+    found.push({ spell, via });
+  };
+  for (const id of row.procs || []) add(id, null);
+  for (const ref of row.effects || []) {
+    // only what the skill grants: removing a buff does not hand you its procs
+    if (ref.act !== "give") continue;
+    const effect = ctx.effects?.get(ref.id);
+    for (const id of effect?.procs || []) {
+      // a buff is routinely named for the skill it casts - Chilling Touch's
+      // buff is "Splinter" and it casts Splinter. "via Splinter" under the
+      // heading "Splinter" says nothing, so only a real second name is kept
+      const spell = ctx.spells.get(id);
+      add(id, spell && spell.name === effect.name ? null : effect.name);
+    }
+  }
+  if (!found.length) return [];
+  const out = [blank(), plain("Triggers:", "sub")];
+  for (const { spell, via } of found) out.push(...procEntry(spell, via, ctx));
+  return out;
+}
+
+function procEntry(spell, via, ctx) {
+  const rank = skillLevelFor(spell, ctx);
+  const cd = spell.cfg?.procCd ?? 0;
+  const notes = [];
+  if (via) notes.push("via " + via);
+  notes.push(`Skill Level ${rank.lvl}`);
+  notes.push(cd > 0 ? `every ${ticksToSeconds(cd)}` : "no proc cooldown");
+
+  const out = [{
+    html: `<button type="button" class="eff-name proc-link" `
+      + `data-spell="${esc(spell.id)}">${esc(spell.name)}</button>`
+      + `<span class="eff-note">${esc(notes.join(" · "))}</span>`,
+    text: `${spell.name} ${notes.join(" ")}`, kind: "eff proc",
+  }];
+  if (spell.desc) {
+    const resolved = resolveCalcs(spell.desc, ctx.lvl, ctx.scaling, ctx.balance, rank);
+    for (const part of resolved.split("[LINE]")) {
+      if (part.trim()) {
+        out.push({
+          html: toHtml("§7" + part.trim()), text: toPlain(part),
+          kind: "desc proc-body",
+        });
+      }
+    }
+  }
+  out.push(...exactStatLines(spell.stats, rank.pct, ctx)
+    .map((l) => ({ ...l, kind: "stat proc-body" })));
+  return out;
+}
+
+/** A skill's display name, for the groups that only hold its id. */
+function spellName(ctx, id) {
+  return toPlain(ctx.lang["mmorpg.spell." + id]) || titleCase(id);
 }
 
 /** A slot tag's display name: `mmorpg.tag.gear_slot.<tag>`. */
