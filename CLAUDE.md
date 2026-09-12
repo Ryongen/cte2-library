@@ -285,8 +285,9 @@ plausible numbers at level 1, where both curves sit at their base.
 ## State / what's left
 - Live data: **2.1.4 only**. Older versions can be backfilled from any instance
   still on disk.
-- **GitHub Pages**: enable at Settings → Pages → Deploy from a branch → `main`
-  → `/ (root)`. Site will be <https://ryongen.github.io/cte2-library/>.
+- **GitHub Pages**: live at <https://ryongen.github.io/cte2-library/>, deployed
+  from a branch — `main`, `/ (root)`. So a push to `main` *is* the deploy;
+  there is no build step to wait on beyond Pages itself, which takes a minute.
 - **Not built yet**: `tools/fetch_curseforge.py` (CTE2 is CurseForge project
   `936875`; needs a free `CF_API_KEY`) and `.github/workflows/update-data.yml`
   to auto-add a version per pack release. `extract.py` is already folder-first,
