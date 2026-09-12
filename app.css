@@ -64,7 +64,9 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
-#level { width: 72px; }
+#level, #skill-level { width: 72px; }
+#skill-level::placeholder { color: #5d646f; }
+#skill-ctl > span { color: var(--accent); }
 
 .ctl.check {
   flex-direction: row;
@@ -186,6 +188,17 @@ nav#rail {
 .tl.meta { display: flex; gap: 8px; font-size: 12px; }
 .tl.meta .k { color: #6e7583; }
 .tl.meta .v { color: #aaaaaa; font-variant-numeric: tabular-nums; }
+
+/* the gem rank the rest of a skill's numbers are read at - the one line on a
+   spell that the Skill Lvl box drives, so it is marked rather than left to
+   look like any other fact */
+.tl.meta .skill-lvl { color: var(--accent); }
+
+/* a status effect the skill puts up, with its own stats indented under it */
+.tl.eff { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.tl.eff .eff-name { font-weight: 700; }
+.tl.eff .eff-note { color: #6e7583; font-size: 12px; }
+.tl.sub-stat { padding-left: 14px; }
 
 .tl.chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {

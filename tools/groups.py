@@ -290,6 +290,101 @@ def build_effect(ctx):
     return rows
 
 
+# ExileEffectAction.INFINITE_DURATION - a potion_dur of -1 never expires.
+INFINITE_DURATION = -1
+
+# ExileEffectAction.GiveOrTake. REMOVE_NEGATIVE has no GiveOrTake2 pair, so the
+# action bails out before applying anything and there is nothing to show.
+_EFFECT_ACTIONS = {
+    "GIVE_STACKS": "give",
+    "REMOVE_STACKS": "take",
+    "REMOVE_ALL_STACKS": "take",
+}
+
+
+def _spell_effects(ctx, entry):
+    """The status effects a skill hands out, and the ones it strips.
+
+    Found the way `Spell.GetTooltipString` finds them: `effect_tip` names one
+    outright, then every component's actions are scanned for an
+    `exile_effect` act. `AttachedSpell.getAllComponents` is on_cast *plus* the
+    entity ones, and that second half is not optional - a projectile applies
+    its debuff from the component keyed on the projectile's name, so reading
+    only on_cast loses most of them.
+
+    Two departures from that loop, both because this list is read rather than
+    hovered:
+
+    - give and take are kept apart. 159 of the pack's 598 effect acts are a
+      REMOVE, and a skill that *consumes* Overheat must not read as one that
+      grants it.
+    - the same id twice keeps the longest duration, which is what the mod's
+      LinkedHashMap pass does, except that -1 counts as the longest rather
+      than as -0.05 seconds.
+    """
+    known = ctx.reg.get("effect") or {}
+    out = {}
+
+    def add(effect_id, dur, on_self, count, chance, action="give", every=False):
+        target = known.get(effect_id)
+        if not target or _hidden(target) or effect_id in regs.PLACEHOLDER_IDS:
+            return
+        key = (effect_id, action)
+        prev = out.get(key)
+        if prev is not None:
+            if "dur" in prev:
+                longest = (dur == INFINITE_DURATION
+                           or (prev["dur"] != INFINITE_DURATION and dur > prev["dur"]))
+                if longest:
+                    prev["dur"] = dur
+            prev["self"] = prev["self"] or on_self
+            return
+        row = {"id": effect_id, "act": action, "self": on_self}
+        # a removal has no duration - the action reads potion_dur for the
+        # event either way, but nothing downstream of a REMOVE looks at it
+        if action == "give":
+            row["dur"] = dur
+        if every:
+            row["all"] = True
+        elif count > 1:
+            row["count"] = count
+        if chance < 100:
+            row["chance"] = chance
+        out[key] = row
+
+    tip = entry.get("effect_tip") or ""
+    if tip:
+        add(tip, INFINITE_DURATION, True, 1, 100)
+
+    attached = entry.get("attached") or {}
+    parts = list(attached.get("on_cast") or [])
+    for group in (attached.get("entity_components") or {}).values():
+        parts.extend(group or [])
+
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        targets = [t.get("type", "") for t in (part.get("targets") or [])
+                   if isinstance(t, dict)]
+        on_self = "self" in targets
+        for act in part.get("acts") or []:
+            if not isinstance(act, dict):
+                continue
+            m = act.get("map") or {}
+            effect_id = m.get("exile_potion_id")
+            if not effect_id:
+                continue
+            raw_action = m.get("potion_action", "GIVE_STACKS")
+            action = _EFFECT_ACTIONS.get(raw_action)
+            if not action:
+                continue
+            add(effect_id, int(m.get("potion_dur", 0) or 0), on_self,
+                int(m.get("count", 1) or 1), float(m.get("chance", 100) or 100),
+                action, raw_action == "REMOVE_ALL_STACKS")
+
+    return list(out.values())
+
+
 def build_spell(ctx):
     rows = []
     for entry_id, e in _entries(ctx, "spell"):
@@ -316,8 +411,20 @@ def build_spell(ctx):
             "style": cfg.get("style", ""),
             "timesToCast": cfg.get("times_to_cast", 1),
         }
+        # what the skill puts on you, so a buff skill reads without a trip to
+        # Status Effects. The stats stay in the effect group - they are looked
+        # up by id at render time, because they scale with this skill's level
+        # and duplicating them here would be a second copy to keep true.
+        effects = _spell_effects(ctx, e)
+        if effects:
+            row["effects"] = effects
+        # Spell.getLevelOf delegates to another skill's rank when this is set.
+        # 17 skills in the pack do, and each pair happens to share a max_lvl, so
+        # nothing moves - but "Skill Level 20 / 20" on Splinter reads as if
+        # Splinter were the thing you rank, and it is Chilling Touch
         _facts(row, e, [("weight", "weight"), ("min_lvl", "minLvl"),
-                        ("max_lvl", "maxLvl"), ("default_lvl", "defaultLvl")])
+                        ("max_lvl", "maxLvl"), ("default_lvl", "defaultLvl"),
+                        ("lvl_based_on_spell", "lvlFrom")])
         row["filters"] = {"tag": tags, "style": [cfg.get("style", "")]}
         rows.append(row)
     return rows
@@ -597,6 +704,10 @@ def build_balance(ctx):
 
     return {
         "maxLevel": balance.get("MAX_LEVEL", 100),
+        # Spell.getMaxLevelWithBonuses: a skill gem's rank ceiling is its own
+        # max_lvl plus this, and gear is the only way past the natural cap.
+        # The mod's default is 5; this pack ships 8.
+        "maxBonusSpellLevels": balance.get("MAX_BONUS_SPELL_LEVELS", 5),
         "gearTypes": build_gear_types(ctx),
         "curves": {
             "NORMAL": curve("NORMAL_STAT_SCALING"),
@@ -604,6 +715,9 @@ def build_balance(ctx):
             "SLOW": curve("SLOW_STAT_SCALING"),
             "STAT_REQ": curve("STAT_REQ_SCALING"),
             "MOB_DAMAGE": curve("MOB_DAMAGE_SCALING"),
+            # not a stat curve - SpellStatsCalculationEvent multiplies every
+            # resource cost by this at the *caster's* level
+            "MANA_COST": curve("MANA_COST_SCALING"),
             "NONE": {"base": 1, "perLevel": 0, "cap": False},
         },
         "rarities": rarities,

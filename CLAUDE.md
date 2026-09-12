@@ -171,8 +171,8 @@ the level box works. The ports:
 
 | Module | From |
 |---|---|
-| `src/scaling.js` | `LevelScalingConfig.getMultiFor`, `StatScaling`, `Stat.scale` |
-| `src/stats.js` | `StatMod.getEstimationTooltip`, `getRangeToShow`, `BasicStatRegex` |
+| `src/scaling.js` | `LevelScalingConfig.getMultiFor`, `StatScaling`, `Stat.scale`, `LeveledValue` |
+| `src/stats.js` | `StatMod.getEstimationTooltip`, `getRangeToShow`, `ExactStatData`, `BasicStatRegex` |
 | `src/mcfmt.js` | colour codes, Enlighten `[label](link)`, `MMORPG.formatNumber` |
 | `src/tooltips.js` | each `BestiaryGroup` lambda's line order |
 | `src/gear.js` | `TagRequirement.meetsRequierment`, `BaseStatsData` |
@@ -184,11 +184,68 @@ Two behaviours that look like bugs and are faithful:
 - **Long stats ignore both the level and the range.** A stat whose lang string
   has a `[VAL1]` hole is its own sentence; the mod fills it with the *unscaled*
   `min` and returns before the range is built — and appends no `%`, because the
-  sentence writes its own. Adding one yields `+15%%`.
+  sentence writes its own. Adding one yields `+15%%`. Only on the *range* path,
+  though: `ExactStatData.fromStatModifier` runs `scaleToLevel` before the
+  sentence is filled, so the same stat on a skill gem *is* level-scaled. Both
+  are reproduced; they are two different renderers in the mod, not one.
 
 Other faithful oddities: `unique` rarity really is `RED`, not gold. Profession
 EXP lists one row per *exp source*, not per profession (`ProfExpBestiary`), so
 professions with no `exp_sources.map` contribute nothing.
+
+### A skill has two levels and almost nothing on it reads the character's
+A `Spell` is its own `MaxLevelProvider`, and `LeveledValue.getValue` asks the
+provider — not the unit — for both the level and the ceiling. So on a skill's
+tooltip the gem's rank, not the character level, drives:
+
+- **the resource cost** (`SpellConfiguration.mana_cost` / `ene_cost`),
+- **the flat base of every `[calc:]`** and **every stat proportion in it**
+  (`ValueCalculation.base`, `ScalingCalc.multi`),
+- **the stats of any status effect the skill applies**
+  (`ExileEffect.getExactStats` rolls them at `LeveledValue(0, 100)` over the
+  *casting skill's* rank).
+
+The character's level still owns `base_scaling_type.scale` on a calc's base and
+`Stat.scale` on every FLAT stat, so the two interleave inside one line: Fireball
+at character 100 reads `38 +277% Weapon Damage`, where the 38 is the character's
+and the 277% is the gem's.
+
+The ceiling is `max_lvl + MAX_BONUS_SPELL_LEVELS` — **8 in this pack**, against
+the mod's default of 5, and gear is the only way past the natural max. That
+matters more than it looks: `Spell.getStats` rolls the gem's own stats at
+`(int)(rank / maxWithBonuses * 100)`, so a gem sitting at its natural 20 is at
+**71%** of its range, not 100%. Showing those as a full `min -> max` range reads
+as if the last 29% were reachable by levelling.
+
+`max_lvl` is per skill and not always 20 — the stances cap at 4 (12 with gear) —
+so the Skill Lvl box holds one number and every entry clamps it to its own
+ceiling. Empty means "this skill's natural max", which is the only default that
+is right for every entry.
+
+`MANA_COST_SCALING` is the one curve on this path that reads the character:
+`SpellStatsCalculationEvent` multiplies both costs by it before anything else,
+so a level 100 character pays 20.8x the configured number (Fireball: 7 -> 154).
+It is not a stat curve, but it ships in the same `game_balance` entry and is
+extracted into `curves` beside the others.
+
+### The buffs a skill puts up
+`Spell.GetTooltipString` finds them in two places: the `effect_tip` field, and
+an `exile_effect` act on any component. **Any** component — `getAllComponents`
+is `on_cast` *plus* every entity one, and most debuffs live on the projectile's
+component, so reading only `on_cast` loses them.
+
+Two things the mod's own loop conflates, and the site does not:
+- **159 of the pack's 598 effect acts are a `REMOVE`.** Ice Comet *removes* an
+  Overheat stack and Dark Pact *consumes* three Sacrifice; listing those under
+  the same heading as a buff inverts what the skill does.
+- **`potion_dur: -1` is `ExileEffectAction.INFINITE_DURATION`**, and the mod
+  prints it through `tooltipFormatTicksAsSeconds` as `-0.05` seconds. Here it is
+  "permanent".
+
+The spell rows carry only the effect id and how it is applied; the stats come
+from the `effect` group at render time, because they scale with the *skill's*
+rank and a copy baked into the spell row would be a second thing to keep true.
+That is the one group that pulls a second group's file (`src/app.js`).
 
 ## Conventions
 - **Never hand-edit `data/**`** — it is generated. Change `tools/` and re-extract.
@@ -212,11 +269,18 @@ python tools/serve.py --no-open &
   --screenshot=shot.png "http://127.0.0.1:8777/?g=spell&id=fireball&lvl=75"
 ```
 
-Deep links take `?v=&g=&id=&lvl=`. Good probes: `g=spell&id=fireball` (icons,
-`[calc:]` substitution, chips), `g=unique_gear&id=fracture_splint&lvl=100`
-(base stats, `gear_defense` folded in), `g=supp_gem&id=fire_flat_dmg&lvl=50`
-(rarity picker - both ends must move), `g=affix&id=strong_int_armor_suf`
-(tag chips plus the resolved base items).
+Deep links take `?v=&g=&id=&lvl=&slvl=` (`slvl` is the gem rank; omit it for
+each skill's natural max). Good probes: `g=spell&id=fireball` (icons, `[calc:]`
+substitution, chips), `g=spell&id=fighter_stance&slvl=12` (a short `max_lvl`, the
+`+8 from gear` line, and both stances' stats inline),
+`g=spell&id=ice_comet` (a skill that only *removes* an effect),
+`g=unique_gear&id=fracture_splint&lvl=100` (base stats, `gear_defense` folded
+in), `g=supp_gem&id=fire_flat_dmg&lvl=50` (rarity picker - both ends must move),
+`g=affix&id=strong_int_armor_suf` (tag chips plus the resolved base items).
+
+Vary `lvl` and `slvl` independently when touching a skill: the two levels move
+different halves of the same line, and a mistake that swaps them still produces
+plausible numbers at level 1, where both curves sit at their base.
 
 ## State / what's left
 - Live data: **2.1.4 only**. Older versions can be backfilled from any instance
