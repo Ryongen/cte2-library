@@ -103,10 +103,11 @@ const BUILDERS = {
       out.push(plain(gear?.name || titleCase(row.f.baseGear), "sub"));
     }
     // the base item comes first, the way GearTooltipUtils lays a gear out:
-    // name, rarity, then BaseStatsData, then the unique's own stats. these
-    // already have the unique's Gear's Defense / Weapon Damage folded in,
-    // because that is what those stats do - they rewrite the base numbers
-    // rather than adding a line of their own
+    // name, rarity, then BaseStatsData, then the unique's own stats. the
+    // number is the base roll window the game brackets under shift, with the
+    // window after the unique's own Gear's Defense / Weapon Damage in
+    // parentheses - those rewrite the base numbers rather than adding a line
+    // of their own, and the shift bracket is blind to them (see baseStatLines)
     const base = baseStatLines(gear, rarity, row.stats, ctx);
     if (base.length) {
       out.push(blank());

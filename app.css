@@ -266,6 +266,9 @@ nav#rail {
 .tl.base .bullet { color: #d9c48b; }
 .tl.base .k { flex: 1 1 auto; }
 .tl.base .v { color: #e8e8e8; font-variant-numeric: tabular-nums; }
+/* the window after the item's own Gear's Defense - the bracket the game
+   prints under shift never includes it, so it rides along quieter */
+.tl.base .v .mod { color: #9aa7c0; }
 
 .runes { color: #ff5555; letter-spacing: .08em; font-weight: 700; }
 
