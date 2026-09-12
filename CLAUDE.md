@@ -59,8 +59,10 @@ wrong silently.
 
 `tools/gen_code_stats.py` scans the mod source and writes `tools/code_stats.json`
 (committed), which `extract.py` layers *underneath* the datapack registry.
-Currently 566/567; `max_total_summons` exists in no source and is reported by
-name. Re-run it after the mod changes.
+Currently every referenced stat resolves (572, 403 datapack + 169 code).
+`max_total_summons` used to be reported as unknown; the only thing that
+referenced it was a stale duplicate entry (below). Re-run it after the mod
+changes, and read the unresolved list when it prints one.
 
 Two traps that generator already handles, so don't "simplify" them away:
 - Stat classes live outside `stats/` too (profession stats are in
@@ -76,7 +78,8 @@ Two traps that generator already handles, so don't "simplify" them away:
   differs per registry (`guid` for affixes/uniques/bases, `identifier` for
   gems/spells, `id` for most, and `mmorpg_stat` uses both `id` and `data.id`).
   `mmorpg_unique_gears` keeps a deprecated flat copy beside the live per-slot
-  one; a filename-keyed merge double-counts it.
+  one; a filename-keyed merge double-counts it. Which of the two wins is its
+  own trap — see below.
 - **Whitelist registry directories, never walk the tree.** The pack ships
   hand-made junk beside the real folders — `mmorpg_map_mob_list - obsolete`,
   a typo'd `mmorph_shrine_buff`, a stray `.claude/`.
@@ -86,6 +89,32 @@ Two traps that generator already handles, so don't "simplify" them away:
   that is why spells show 309 of 437 ids (128 are `*_deprecated`).
 - Pack JSON is not always strict JSON (trailing commas); `sources.py` parses
   leniently, as Minecraft's GSON does.
+
+### Two files, one id: the flat copy is the stale one
+The pack declares the same id twice a lot — 170 uniques, 139 spells, 146 stats,
+one status effect. It is always the same shape: a flat `honourhome.json` left
+over beside the live `chainmail_helmet/honourhome.json` the author moved into a
+per-slot folder. The leftovers are a single April batch by mtime; the folder
+copies are August/September. They are not equal files — that Honourhome is
+50-60% Gear's Defense against the current 12.5-15%, and 138 spells had
+`Max Gem Level 16` where the pack now says 20.
+
+**There is no in-game order to copy here.** Both files load: `fileToId` makes
+them two different resource locations (`mmorpg:honourhome` and
+`mmorpg:chainmail_helmet/honourhome`), and `BaseDataPackLoader.apply` registers
+each by its internal GUID, unregistering whatever held it. It iterates a
+`HashMap`, so the winner is bucket order — simulating it gives the subfolder
+copy for 92 uniques and the flat one for 78. The game is picking at random and
+players see a mix.
+
+So `load_registry` ranks candidates within a source instead: a filename that
+matches the declared id beats one that does not (`fishing_treasure_chance_bonus.json`
+declares `fishing_bar_size` — copy-paste that never got its id changed, and it
+was shadowing the real stat), then the deeper path, then path order. Source
+order still outranks all of it, so the pack keeps beating the jar.
+
+It prints `ids declared twice by one source` on every run. Counts climbing is
+the pack reorganising further; a *new* group appearing there is worth a look.
 
 ### A gear rarity has two percent windows and they are not the same one
 `GearRarity` carries both `stat_percents` and `base_stat_percents`, and they

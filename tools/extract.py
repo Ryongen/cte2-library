@@ -36,10 +36,15 @@ LANG_PREFIXES = (
 
 
 def load_registry(registry, data_sources):
-    """Merge one registry across every source, later sources winning."""
-    out = {}
+    """Merge one registry across every source, later sources winning.
+
+    Returns (entries, shadowed) - shadowed being the ids one source declares
+    twice, which is a pack mistake worth printing. An id the *pack* takes off
+    a jar is not in there: that is the merge doing its job.
+    """
+    out, rank, shadowed = {}, {}, {}
     prefix = registry.data_prefix()
-    for source in data_sources:
+    for order, source in enumerate(data_sources):
         for path in sorted(source.files(prefix, ".json")):
             try:
                 obj = source.read_json(path)
@@ -48,13 +53,43 @@ def load_registry(registry, data_sources):
                 continue
             if not isinstance(obj, dict):
                 continue
-            fallback = os.path.splitext(os.path.basename(path))[0]
+            rel = path[len(prefix):]
+            fallback = os.path.splitext(os.path.basename(rel))[0]
             entry_id = registry.entry_id(obj, fallback)
+            # Two files can carry the same internal id, and the pack ships 170
+            # such uniques and 139 such spells: a flat leftover from April
+            # beside the live copy the author moved into a per-slot folder
+            # (`honourhome.json` vs `chainmail_helmet/honourhome.json`, at
+            # 50-60% Gear's Defense against the current 12.5-15%). The game
+            # registers whichever its loader reaches last, and that loader
+            # iterates a HashMap - the stale copy wins for roughly half of
+            # them, arbitrarily. There is no in-game order to be faithful to,
+            # so rank the candidates by what the author clearly meant:
+            #   1. a file whose own name matches the id it declares, because
+            #      the ones that disagree are copy-paste that forgot to change
+            #      it (`fishing_treasure_chance_bonus.json` declaring
+            #      `fishing_bar_size`, shadowing the real stat)
+            #   2. the deeper path, the per-slot or per-class folder the pack
+            #      has been reorganising into
+            #   3. path order, so an unresolved tie still lands somewhere
+            # Source order outranks all of it: the pack still beats the jar.
+            here = (order, fallback == entry_id, rel.count("/"))
+            if entry_id in out:
+                loses = here < rank[entry_id]
+                # a later source shadowing an earlier one is the merge doing
+                # its job; only a source colliding with itself is a mistake
+                if here[0] == rank[entry_id][0]:
+                    shadowed.setdefault(entry_id, []).append(
+                        rel if loses else out[entry_id]["_path"])
+                if loses:
+                    continue
             # remember where it came from, for the merge-direction check
             obj["_source"] = source.name
             obj["_id"] = entry_id
+            obj["_path"] = rel
             out[entry_id] = obj
-    return out
+            rank[entry_id] = here
+    return out, shadowed
 
 
 def load_lang(asset_sources):
@@ -174,8 +209,18 @@ def main(argv=None):
 
     # merge every registry we need
     loaded = {}
+    collisions = {}
     for name, registry in regs.ALL_REGISTRIES.items():
-        loaded[name] = load_registry(registry, data_sources)
+        loaded[name], shadowed = load_registry(registry, data_sources)
+        if shadowed:
+            collisions[name] = shadowed
+    if collisions:
+        print("\nids declared twice by one source (kept the live copy):")
+        for name in sorted(collisions):
+            shadowed = collisions[name]
+            example = min(shadowed)
+            print(f"  {name:14} {len(shadowed):4} shadowed"
+                  f"   e.g. {example} <- {', '.join(shadowed[example])}")
 
     code_stats = load_code_stats()
     ctx = groupbuild.Context(loaded, lang, code_stats)
