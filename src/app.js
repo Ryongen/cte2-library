@@ -7,9 +7,12 @@
 
 import { loadVersions, loadVersion, loadGroup, iconUrl } from "./data.js";
 import { Scaling, SkillLevel, MIN_LEVEL } from "./scaling.js";
-import { buildTooltip, tooltipText } from "./tooltips.js";
+import {
+  buildTooltip, tooltipText, skillTagName, gearSlotName, affixTypeName,
+} from "./tooltips.js";
 import { titleCase } from "./stats.js";
 import { indexAffixGear, gearTypeName } from "./gear.js";
+import { t, setUiLocale, applyUi } from "./ui.js";
 
 const GROUPS = [
   ["currency", "Currency", "currency"],
@@ -33,34 +36,35 @@ const GROUPS = [
 // what that tier can actually roll.
 const RARITY_GROUPS = new Set(["affix", "aura", "supp_gem"]);
 
-// which filter dimensions each group offers, and how to label them
+// which filter dimensions each group offers, and the ui.js string naming each
 // `gear` is the resolved list - which base items an affix can actually roll
 // on, the way GroupFilterType.AFFIX_SLOTS works. `slot` is the raw tag rule
 // behind it, kept because several affix pools overlap on one item and the tag
 // is the only way to ask for one of them.
-// `cat` is the site's own grouping over the base items - "Any Chest", "Any
-// Two-Handed Weapon" - built in build_gear_categories and shipped on every
+// `cat` is the site's own grouping over the base items - "Chest",
+// "Two-Handed Weapon" - built in build_gear_categories and shipped on every
 // gear type. It rides alongside `gear`/`slot` rather than replacing them,
 // because the exact base item is still the question half the time.
 const FILTERS = {
-  affix: [["type", "Affix Type"], ["cat", "Category"],
-          ["gear", "Base Item"], ["slot", "Tag"]],
-  unique_gear: [["cat", "Category"], ["slot", "Base Item"],
-                ["set", "Set"], ["league", "League"]],
-  runeword: [["cat", "Category"], ["runeCount", "Rune Count"], ["slot", "Slot"]],
-  spell: [["cls", "Class"], ["tag", "Tag"], ["style", "Style"]],
-  effect: [["type", "Type"], ["tag", "Tag"]],
-  supp_gem: [["style", "Style"]],
-  aura: [["style", "Style"]],
-  gem: [["gemType", "Gem Type"], ["tier", "Tier"]],
-  rune: [["tier", "Tier"]],
-  currency: [["rarity", "Rarity"]],
-  prof: [["profession", "Profession"], ["tier", "Tier"]],
+  affix: [["type", "affixType"], ["cat", "category"],
+          ["gear", "baseItem"], ["slot", "tag"]],
+  unique_gear: [["cat", "category"], ["slot", "baseItem"],
+                ["set", "set"], ["league", "league"]],
+  runeword: [["cat", "category"], ["runeCount", "runeCount"], ["slot", "slot"]],
+  spell: [["cls", "class"], ["tag", "tag"], ["style", "style"]],
+  effect: [["type", "type"], ["tag", "tag"]],
+  supp_gem: [["style", "style"]],
+  aura: [["style", "style"]],
+  gem: [["gemType", "gemType"], ["tier", "tier"]],
+  rune: [["tier", "tier"]],
+  currency: [["rarity", "rarity"]],
+  prof: [["profession", "profession"], ["tier", "tier"]],
 };
 
 const state = {
   versions: [],
   version: null,
+  locale: null,         // a meta.locales id, or null for English
   scaling: null,
   group: "unique_gear",
   rows: [],
@@ -105,6 +109,8 @@ async function boot() {
   if (Number.isFinite(slvl)) state.skillLvl = slvl;
   // checked against the version's own picker once that has loaded, below
   if (params.get("r")) state.rarity = params.get("r");
+  // checked against the version's own list once that has loaded
+  state.locale = params.get("lang") || stored("cte2.lang");
 
   renderVersionPicker();
   renderGroupRail();
@@ -113,7 +119,11 @@ async function boot() {
 }
 
 async function selectVersion(pack, selectId) {
-  state.version = await loadVersion(pack);
+  state.version = await loadVersion(pack, state.locale);
+  // a language this version does not translate falls back to English
+  state.locale = state.version.locale;
+  setUiLocale(state.locale, state.version.translated);
+  applyUi();
   state.scaling = new Scaling(state.version.balance);
   state.effects = null;
   state.spells = null;
@@ -124,6 +134,7 @@ async function selectVersion(pack, selectId) {
   state.rarity = pickableRarity(state.rarity);
   localStorage.setItem("cte2.version", pack);
   $("#version").value = pack;
+  renderLangPicker();
   $("#level").max = String(state.scaling.maxLevel);
   $("#level").value = String(state.lvl);
   renderGroupRail();
@@ -194,12 +205,28 @@ function renderVersionPicker() {
     .map((v) => `<option value="${v.pack}">${v.pack}</option>`).join("");
 }
 
+// Only what this version translates, each with how much of it - a third at
+// best, since the pack adds its content in English alone.
+function renderLangPicker() {
+  const locales = state.version.meta.locales || [];
+  $("#lang-ctl").hidden = !locales.length;
+  $("#lang").innerHTML = `<option value="">English</option>` + locales.map((l) =>
+    `<option value="${esc(l.id)}"${l.id === state.locale ? " selected" : ""}>${
+      esc(l.name)} · ${l.coverage}%</option>`).join("");
+  // lets the browser pick CJK glyphs for the right script
+  document.documentElement.lang = state.locale
+    ? state.locale.replace(/_(\w+)$/, (_, r) => "-" + r.toUpperCase()) : "en";
+}
+
 function renderGroupRail() {
   const counts = state.version?.meta?.counts || {};
+  // the version's own names, translated when a language is picked; these
+  // English ones only fill in before the first version has loaded
+  const names = state.version?.balance?.groupNames || {};
   $("#rail").innerHTML = GROUPS.map(([key, label, icon]) => `
     <button class="grp${key === state.group ? " on" : ""}" data-group="${key}">
       <img src="${iconUrl("group", icon + ".png")}" alt="" width="20" height="20">
-      <span class="lbl">${label}</span>
+      <span class="lbl">${esc(names[key] || label)}</span>
       <span class="n">${counts[key] ?? ""}</span>
     </button>`).join("");
 }
@@ -213,8 +240,8 @@ function renderRarityPicker() {
   host.hidden = false;
   const picks = state.version.balance.pickableRarities || [];
   const rarities = state.version.balance.rarities || {};
-  host.innerHTML = `<span>Rarity</span><select id="rarity-sel">
-    <option value="">Any (full range)</option>
+  host.innerHTML = `<span>${esc(t("rarity"))}</span><select id="rarity-sel">
+    <option value="">${esc(t("anyFull"))}</option>
     ${picks.map((rid) => `<option value="${esc(rid)}"${
       rid === state.rarity ? " selected" : ""}>${esc(rarities[rid]?.name || rid)}</option>`).join("")}
   </select>`;
@@ -235,7 +262,7 @@ function renderSkillLevel() {
   const skill = state.selected
     ? new SkillLevel(state.selected, state.scaling, state.skillLvl) : null;
   box.max = skill ? String(skill.maxLvl) : "";
-  box.placeholder = skill ? `max ${skill.natural}` : "max";
+  box.placeholder = skill ? t("maxN", { n: skill.natural }) : t("max");
   box.value = state.skillLvl == null ? "" : String(skill ? skill.lvl : state.skillLvl);
 }
 
@@ -256,8 +283,8 @@ function renderFilters() {
       .sort((a, b) => a[2] - b[2] || a[1].localeCompare(b[1]))
       .map(([v, text]) =>
         `<option value="${esc(v)}">${esc(text)}</option>`).join("");
-    return `<label class="filter"><span>${label}</span>
-      <select data-dim="${dim}"><option value="">Any</option>${opts}</select>
+    return `<label class="filter"><span>${esc(t(label))}</span>
+      <select data-dim="${dim}"><option value="">${esc(t("any"))}</option>${opts}</select>
     </label>`;
   }).join("");
 }
@@ -290,6 +317,17 @@ function filterLabel(dim, value) {
     const text = balance && state.version.lang["mmorpg.tag.gear_slot." + value];
     if (text) return text;
   }
+  if (dim === "slot" && state.group === "runeword") {
+    return gearSlotName(state.version.lang, value);
+  }
+  if (dim === "tag") {
+    return skillTagName(state.version.lang, value,
+      state.group === "effect" ? ["effect", "spell"] : ["spell", "effect"]);
+  }
+  if (dim === "type" && state.group === "affix") {
+    const text = affixTypeName(state.version.translated, value);
+    if (text !== value) return text;
+  }
   return titleCase(value);
 }
 
@@ -302,7 +340,8 @@ function matches(row) {
   }
   if (state.search) {
     const q = state.search.toLowerCase();
-    const inName = row.name.toLowerCase().includes(q) || row.id.includes(q);
+    const inName = row.name.toLowerCase().includes(q) || row.id.includes(q)
+      || Boolean(row.nameEn?.toLowerCase().includes(q));
     if (inName) return true;
     if (!state.searchTooltips) return false;
     return tooltipFor(row).text.includes(q);
@@ -318,9 +357,9 @@ function applyFilter() {
 function renderList() {
   const host = $("#list");
   $("#count").textContent =
-    `${state.filtered.length} of ${state.rows.length}`;
+    t("count", { n: state.filtered.length, total: state.rows.length });
   if (!state.filtered.length) {
-    host.innerHTML = '<p class="empty">Nothing matches.</p>';
+    host.innerHTML = `<p class="empty">${esc(t("nothing"))}</p>`;
     return;
   }
   const icon = GROUPS.find(([k]) => k === state.group)?.[2];
@@ -348,6 +387,7 @@ function tooltipFor(row) {
   const lines = buildTooltip(state.group, row, {
     lvl: state.lvl,
     lang: state.version.lang,
+    translated: state.version.translated,
     balance: state.version.balance,
     scaling: state.scaling,
     rarity: currentRarity(),
@@ -380,7 +420,7 @@ function select(row, { scroll = false } = {}) {
 function renderTooltip() {
   const host = $("#tip");
   if (!state.selected) {
-    host.innerHTML = '<p class="empty">Pick an entry.</p>';
+    host.innerHTML = `<p class="empty">${esc(t("pick"))}</p>`;
     return;
   }
   const { lines } = tooltipFor(state.selected);
@@ -461,6 +501,12 @@ function wireControls() {
   });
 
   $("#version").addEventListener("change", (e) => selectVersion(e.target.value));
+
+  $("#lang").addEventListener("change", (e) => {
+    state.locale = e.target.value || null;
+    store("cte2.lang", state.locale);
+    selectVersion(state.version.pack, state.selected?.id);
+  });
 }
 
 function syncUrl() {
@@ -470,8 +516,22 @@ function syncUrl() {
   if (state.lvl !== MIN_LEVEL) p.set("lvl", String(state.lvl));
   if (state.skillLvl != null) p.set("slvl", String(state.skillLvl));
   if (state.rarity) p.set("r", state.rarity);
+  if (state.locale) p.set("lang", state.locale);
   if (state.selected) p.set("id", state.selected.id);
   history.replaceState(null, "", `?${p}`);
+}
+
+// storage can be missing or throw (private windows, blocked site data), and a
+// language pick is a convenience - losing it must not break the page
+function stored(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function store(key, value) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch { /* not remembered, still applied */ }
 }
 
 function esc(s) {

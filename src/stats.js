@@ -175,7 +175,7 @@ export function titleCase(id) {
  * character's level. Feeding the character's level into the walk instead makes
  * a skill look like it gains from levelling when it gains from ranking up.
  */
-export function resolveCalcs(desc, lvl, scaling, balance, skill) {
+export function resolveCalcs(desc, lvl, scaling, balance, skill, lang = {}) {
   const calcs = balance?.valueCalcs || {};
   return stripLinks(String(desc || "")).replace(
     /\[calc:([a-z0-9_]+)\]/gi,
@@ -188,7 +188,9 @@ export function resolveCalcs(desc, lvl, scaling, balance, skill) {
         if (!s.stat) continue;
         const pct = Math.round(
           leveledValue(s.min, s.max, skill.lvl, skill.maxLvl) * 100);
-        parts.push(`§b+${pct}% ${titleCase(s.stat)}§7`);
+        // the stat's own name, as ValueCalculation prints it
+        const name = stripLinks(statText(lang, s.stat) || "") || titleCase(s.stat);
+        parts.push(`§b+${pct}% ${name}§7`);
       }
       return parts.join(" ");
     });

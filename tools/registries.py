@@ -104,5 +104,22 @@ GROUP_ORDER = [
     ("prof",        "Profession EXP", "prof"),
 ]
 
+# The Words entry each BestiaryGroup.getName() reads. Its English is singular
+# ("Gem", "Skill", "[Augment](augment)"), so the rail keeps the labels above
+# and only a translation borrows these - see Context.translated_name.
+GROUP_NAME_KEYS = {
+    "currency": "mmorpg.word.currency",
+    "affix": "mmorpg.word.affixes",
+    "gem": "mmorpg.word.gem",
+    "rune": "mmorpg.word.rune",
+    "unique_gear": "mmorpg.word.unique_gear",
+    "runeword": "mmorpg.word.runeword",
+    "aura": "mmorpg.word.aura",
+    "supp_gem": "mmorpg.word.suppgem",
+    "effect": "mmorpg.word.status_effect",
+    "spell": "mmorpg.word.spell",
+    "prof": "mmorpg.word.professions",
+}
+
 # Groups whose entries the in-game wiki shows a rarity picker for
 RARITY_PICKER_GROUPS = {"aura", "supp_gem"}

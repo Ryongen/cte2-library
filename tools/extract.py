@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import registries as regs
 import sources as src
 import groups as groupbuild
+import locales
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -31,7 +32,8 @@ LANG_PREFIXES = (
     "library_of_exile.item_modification.", "library_of_exile.item_requirement.",
     "library_of_exile.currency.", "mmorpg.profession.", "mmorpg.gearslot.",
     "mmorpg.rarity.", "mmorpg.runeword.", "mmorpg.rune.", "mmorpg.gem.",
-    "mmorpg.gear_type.", "mmorpg.asc_class.",
+    "mmorpg.gear_type.", "mmorpg.asc_class.", "mmorpg.gem_type.",
+    "mmorpg.gem_rank.",
 )
 
 
@@ -148,6 +150,51 @@ def extract_icons(asset_sources, icon_root, spell_ids):
     return written
 
 
+def finish_balance(balance, built, code_stats):
+    """Back-fill the stats only Java defines.
+
+    The gear bases and the set bonuses are counted too - nothing else
+    references weapon_damage, learn_slice or learn_bola_throw. Returns
+    (from datapack, referenced, unresolved).
+    """
+    referenced = groupbuild.referenced_stats(built.values())
+    referenced |= groupbuild.gear_type_stats(balance)
+    referenced |= groupbuild.item_set_stats(balance)
+    from_datapack = len([s for s in referenced if s in balance["stats"]])
+    unresolved = groupbuild.fill_code_stats(balance["stats"], referenced, code_stats)
+    return from_datapack, referenced, unresolved
+
+
+def write_locales(version_dir, instance, asset_sources, loaded, lang, code_stats,
+                  built, balance, compact):
+    """One overlay per language the sources translate. See locales.py."""
+    english = prune_lang(lang)
+    # Load My Resources' folder and the player's resource packs last, so a
+    # community translation beats the jar's - they only ever feed this, never
+    # the English or the icons
+    translations = locales.load_translations(
+        asset_sources + src.loose_resources(instance) + src.resource_packs(instance),
+        english, prune_lang)
+    out = []
+    print("\nlocales:        (translated and still current, of "
+          f"{len(english)} site keys)")
+    for loc, aliases, text in locales.collapse(translations):
+        loc_built, loc_balance = locales.build_bundle(
+            loaded, lang, text, code_stats,
+            lambda b, g: finish_balance(b, g, code_stats))
+        groups, bal = locales.overlay(built, balance, loc_built, loc_balance)
+        size = write_json(os.path.join(version_dir, "lang", f"{loc}.json"),
+                          {"lang": text, "groups": groups, "balance": bal},
+                          compact=compact)
+        coverage = round(100 * len(text) / len(english))
+        rows = sum(len(p) for p in groups.values())
+        print(f"  {loc:6} {len(text):5} keys {coverage:3}%  {rows:5} rows patched"
+              f"  {size/1024:7.1f} KB" + (f"   = {', '.join(aliases)}" if aliases else ""))
+        out.append({"id": loc, "name": locales.NATIVE_NAMES.get(loc, loc),
+                    "coverage": coverage, "aliases": aliases})
+    return out
+
+
 def load_code_stats():
     """Properties for the stats only Java defines. See gen_code_stats.py."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code_stats.json")
@@ -230,6 +277,11 @@ def main(argv=None):
                     help="build even when the pack's openloader overrides are "
                          "missing - see no_pack_layer_message, almost never what you want")
     args = ap.parse_args(argv)
+    # a Windows console is cp1252, and resource packs get named in Cyrillic
+    # and Hangul - a file name is not worth dying over
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
 
     if not args.instance:
         ap.error("--instance is required (a pack zip path will be added with the CF fetcher)")
@@ -314,14 +366,7 @@ def main(argv=None):
 
     balance = groupbuild.build_balance(ctx)
 
-    # back-fill the stats only Java defines, and say so if any are still unknown.
-    # the gear bases and the set bonuses are counted too - nothing else
-    # references weapon_damage, learn_slice or learn_bola_throw
-    referenced = groupbuild.referenced_stats(built.values())
-    referenced |= groupbuild.gear_type_stats(balance)
-    referenced |= groupbuild.item_set_stats(balance)
-    from_datapack = len([s for s in referenced if s in balance["stats"]])
-    unresolved = groupbuild.fill_code_stats(balance["stats"], referenced, code_stats)
+    from_datapack, referenced, unresolved = finish_balance(balance, built, code_stats)
     print(f"  stats          {len(referenced):5} referenced  "
           f"({from_datapack} datapack, {len(referenced) - from_datapack - len(unresolved)} code)")
     if unresolved:
@@ -341,6 +386,10 @@ def main(argv=None):
                           [r["id"] for r in built.get("spell", [])])
     print(f"  icons          {icons:5} new")
 
+    locale_list = write_locales(version_dir, args.instance, asset_sources, loaded,
+                                lang, code_stats,
+                                built, balance, compact=not args.pretty)
+
     meta = {
         "pack": version,
         "mods": mod_versions,
@@ -348,6 +397,7 @@ def main(argv=None):
                              .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "maxLevel": balance.get("maxLevel", 100),
         "counts": counts,
+        "locales": locale_list,
     }
     write_json(os.path.join(version_dir, "meta.json"), meta, compact=False)
 

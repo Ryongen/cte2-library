@@ -191,15 +191,100 @@ def open_instance(instance_dir):
                 data_sources.append(DirSource(inner, name=f"openloader/{pack}"))
 
     # openloader resource packs carry the lang override - note the doubled
-    # `resources/resources`, which is how the pack actually lays it out
+    # `resources/resources`, which is how the pack actually lays it out. A
+    # pack can also be a zip, which is how translation packs get handed out
     ol_res = os.path.join(instance_dir, "config", "openloader", "resources")
     if os.path.isdir(ol_res):
         for pack in sorted(os.listdir(ol_res)):
             inner = os.path.join(ol_res, pack)
             if os.path.isdir(inner):
                 asset_sources.append(DirSource(inner, name=f"openloader-res/{pack}"))
+            elif pack.lower().endswith(".zip") and zipfile.is_zipfile(inner):
+                asset_sources.append(ZipDirSource(
+                    inner, _zip_pack_root(inner), name=f"openloader-res/{pack}"))
 
     return data_sources, asset_sources, versions
+
+
+def resource_packs(instance_dir):
+    """The instance's `resourcepacks/`, folders and zips, alphabetical.
+
+    Kept apart from the asset sources on purpose: these are the player's own
+    packs - textures, fonts, translations handed around by the community - and
+    only their translations are wanted. Merged into the English or the icons,
+    a texture pack would restyle the site.
+    """
+    out = []
+    root = os.path.join(instance_dir, "resourcepacks")
+    if not os.path.isdir(root):
+        return out
+    for pack in sorted(os.listdir(root)):
+        path = os.path.join(root, pack)
+        if os.path.isdir(path):
+            # an instance overlay unpacked here by mistake: it carries a
+            # Load My Resources tree, not assets/, and the game ignores it too
+            if (not os.path.isdir(os.path.join(path, "assets"))
+                    and os.path.isdir(os.path.join(path, "resources"))):
+                print(f"  ! resourcepacks/{pack} is not a resource pack - it "
+                      "has resources/ but no assets/.\n"
+                      "    It looks like an instance overlay: copy its "
+                      "resources/ into the instance's own resources/.")
+                continue
+            out.append(DirSource(path, name=f"resourcepacks/{pack}"))
+        elif pack.lower().endswith(".zip") and zipfile.is_zipfile(path):
+            out.append(ZipDirSource(path, _zip_pack_root(path),
+                                    name=f"resourcepacks/{pack}"))
+        elif pack.lower().endswith((".7z", ".rar")):
+            print(f"  ! skipped resourcepacks/{pack}: not a zip - extract it "
+                  "to a folder there")
+    return out
+
+
+class NamespaceDirSource(DirSource):
+    """Load My Resources' folder: `<ns>/lang/x.json` where a pack has
+    `assets/<ns>/lang/x.json`. Presented with the assets/ prefix, so readers
+    need not know the difference."""
+
+    def files(self, prefix, suffix=None):
+        if not prefix.startswith("assets/"):
+            return
+        for rel in super().files(prefix[len("assets/"):], suffix):
+            yield "assets/" + rel
+
+    def read(self, path):
+        if not path.startswith("assets/"):
+            return None
+        return super().read(path[len("assets/"):])
+
+
+def loose_resources(instance_dir):
+    """`<instance>/resources/`, which the pack's Load My Resources mod loads.
+
+    CTE2 ships it empty; community translations (the Russian one) unpack
+    into it. Translations only, like resource_packs.
+    """
+    root = os.path.join(instance_dir, "resources")
+    if not os.path.isdir(root) or not os.listdir(root):
+        return []
+    return [NamespaceDirSource(root, name="resources")]
+
+
+def _zip_pack_root(zip_path):
+    """Where `assets/` sits in a resource pack zip.
+
+    At the root in a proper pack, but zipping a folder from Explorer wraps
+    everything in one more directory - accept that single wrapper too.
+    """
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    if any(n.startswith("assets/") for n in names):
+        return ""
+    tops = {n.split("/", 1)[0] for n in names if "/" in n}
+    if len(tops) == 1:
+        top = tops.pop()
+        if any(n.startswith(f"{top}/assets/") for n in names):
+            return top
+    return ""
 
 
 def detect_pack_version(instance_dir):

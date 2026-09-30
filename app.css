@@ -69,7 +69,9 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
-#level, #skill-level { width: 72px; }
+#level { width: 72px; }
+/* wide enough for a translated "max 20" placeholder (Russian "макс. 20") */
+#skill-level { width: 88px; }
 #skill-level::placeholder { color: #5d646f; }
 #skill-ctl > span { color: var(--accent); }
 

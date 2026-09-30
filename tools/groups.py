@@ -39,9 +39,11 @@ def item_lang_key(item_id):
 
 
 class Context:
-    def __init__(self, loaded, lang, code_stats=None):
+    def __init__(self, loaded, lang, code_stats=None, translated=None):
         self.reg = loaded
         self.lang = lang
+        # the locale's own keys when building a translation, None for English
+        self.translated = translated
         self.code_stats = code_stats or {"exact": {}, "patterns": []}
         self._procs = None
         self._classes = None
@@ -92,6 +94,16 @@ class Context:
             if text and text != "Unused":
                 return text
         return title_case(fallback_id)
+
+    def translated_name(self, key, english):
+        """The site's own English, unless a translation has the game's word.
+
+        For labels the site phrases itself but the game has a near key for:
+        `mmorpg.word.armorgear` is "Armors" in English, so the English build
+        keeps its own wording and only a translation borrows the key.
+        """
+        text = clean(self.translated.get(key)) if self.translated else None
+        return text or english
 
 
 def stat_list(raw):
@@ -330,6 +342,11 @@ def build_rune(ctx):
          ("min_lvl_multi", "minLvlMulti")])
 
 
+# GemItem.GemRank, by tier - its GUID is the enum name, so this is the lang key
+GEM_RANKS = ("cracked", "chipped", "flawed", "regular", "grand", "glorious",
+             "divine", "pinnacle")
+
+
 def build_gem(ctx):
     rows = _socketable(
         ctx, "gem",
@@ -338,13 +355,17 @@ def build_gem(ctx):
         [("tier", "tier"), ("weight", "weight"), ("item_id", "item"),
          ("rar", "rarity"), ("gem_type", "gemType"),
          ("perc_upgrade_chance", "upgradeChance")])
-    # a gem's lang name is per gem_type, so every tier of Amethyst resolves to
-    # "Amethyst" - qualify it so the list is navigable
+    # GemItem.getName: the gem_item_name formatter over rank and type, so every
+    # tier of Amethyst is its own name ("Cracked Amethyst"). The formatter is
+    # there for the languages that put the type first - French is "%2$s %1$s"
+    fmt = ctx.raw("mmorpg.formatter.gem_item_name") or "%1$s %2$s"
     for row in rows:
         f = row.get("f") or {}
         tier = f.get("tier")
-        if tier is not None:
-            row["name"] = row["name"] + " " + str(int(tier) + 1)
+        if tier is not None and 0 <= int(tier) < len(GEM_RANKS):
+            rank = GEM_RANKS[int(tier)]
+            rank_name = clean(ctx.raw("mmorpg.gem_rank." + rank)) or title_case(rank)
+            row["name"] = fmt.replace("%1$s", rank_name).replace("%2$s", row["name"])
         row.setdefault("filters", {})["gemType"] = [f.get("gemType", "")]
     return rows
 
@@ -769,10 +790,15 @@ def build_gear_types(ctx):
 # a texture index and ties trident with hammer.
 SLOT_CATEGORY_ORDER = ("helmet", "chest", "pants", "boots")
 
-# SlotFamily, in the order the picker lists them. The names are the enum's own
-# (Armor, Jewelry - US spelling), hyphenated where the id runs two words.
-FAMILY_CATEGORY_ORDER = ("Armor", "Weapon", "OffHand", "Jewelry")
-FAMILY_CATEGORY_NAMES = {"OffHand": "Off-Hand"}
+# SlotFamily, in the order the picker lists them, with the English name and
+# the game's word for it (plural in English - "Armors" - hence only borrowed by
+# a translation; see Context.translated_name).
+FAMILY_CATEGORIES = (
+    ("Armor", "Armor", "mmorpg.word.armorgear"),
+    ("Weapon", "Weapon", "mmorpg.word.weapongear"),
+    ("OffHand", "Off-Hand", "mmorpg.word.offhandgear"),
+    ("Jewelry", "Jewelry", "mmorpg.word.jewelrygear"),
+)
 
 # Tags that say *where* a gear type sits rather than what it is: the family
 # rows, the `*_stat` rows a slot contributes to, and the three attributes.
@@ -812,7 +838,7 @@ def _trait_tags(gear_types, family, slot_ids):
 
 
 def build_gear_categories(ctx, gear_types):
-    """The "Any Chest" / "Any Two-Handed Weapon" picks, and who is in them.
+    """The "Chest" / "Two-Handed Weapon" category picks, and who is in them.
 
     The in-game wiki has no such filter - its slot list is one row per base
     item, 43 of them - so this grouping is the site's own. It is still built
@@ -825,18 +851,21 @@ def build_gear_categories(ctx, gear_types):
     cats = collections.OrderedDict()
     members = {}
 
+    # no "Any " in front: the game has no "Any %s" to translate it with, and
+    # an English prefix on a translated name reads "Any 头盔". Under a
+    # "Category" filter the bare name already says it.
     def category(key, name, order, test):
         hit = [gid for gid, g in gear_types.items() if test(g)]
         if not hit:
             return
-        cats[key] = {"key": key, "name": "Any " + name, "order": order}
+        cats[key] = {"key": key, "name": name, "order": order}
         members[key] = set(hit)
 
     slot_ids = {g["slot"] for g in gear_types.values() if g["slot"]}
     slot_size = collections.Counter(g["slot"] for g in gear_types.values())
 
-    for i, fam in enumerate(FAMILY_CATEGORY_ORDER):
-        category("fam_" + fam.lower(), FAMILY_CATEGORY_NAMES.get(fam, fam),
+    for i, (fam, name, key) in enumerate(FAMILY_CATEGORIES):
+        category("fam_" + fam.lower(), ctx.translated_name(key, name),
                  10 + i, lambda g, fam=fam: g["family"] == fam)
 
     # a slot holding a single base item says nothing the Base Item filter does
@@ -853,7 +882,8 @@ def build_gear_categories(ctx, gear_types):
         category("tag_" + tag, ctx.name(["mmorpg.tag.gear_slot." + tag], tag),
                  30, lambda g, tag=tag: tag in g["tags"])
 
-    # handedness from the weapon type, never from the `two_handed` tag
+    # handedness from the weapon type, never from the `two_handed` tag. The
+    # game has no word for one-handed, so these two stay English everywhere.
     category("wep_1h", "One-Handed Weapon", 40,
              lambda g: bool(g.get("weapon")) and g["weapon"]["dual"])
     category("wep_2h", "Two-Handed Weapon", 40,
@@ -861,9 +891,11 @@ def build_gear_categories(ctx, gear_types):
     # OPTIONALLY_RANGED is the trident, and it really is both: the mod counts
     # it as a two-handed melee weapon for a mercenary's reach and as non-melee
     # in WeaponTypes.isMelee.
-    category("wep_melee", "Melee Weapon", 41,
+    category("wep_melee", ctx.translated_name(
+                 "mmorpg.tag.gear_slot.melee_weapon", "Melee Weapon"), 41,
              lambda g: bool(g.get("weapon")) and g["weapon"]["range"] != "RANGED")
-    category("wep_ranged", "Ranged Weapon", 41,
+    category("wep_ranged", ctx.translated_name(
+                 "mmorpg.tag.gear_slot.ranged_weapon", "Ranged Weapon"), 41,
              lambda g: bool(g.get("weapon")) and g["weapon"]["range"] != "MELEE")
     for tag in _trait_tags(gear_types, "Weapon", slot_ids):
         if tag in ("melee_weapon", "ranged_weapon"):
@@ -1065,8 +1097,12 @@ def build_balance(ctx):
         # max_lvl plus this, and gear is the only way past the natural cap.
         # The mod's default is 5; this pack ships 8.
         "maxBonusSpellLevels": balance.get("MAX_BONUS_SPELL_LEVELS", 5),
+        # the rail's labels, here rather than in the page so a translation's
+        # overlay can patch them like any other baked name
+        "groupNames": {key: ctx.translated_name(regs.GROUP_NAME_KEYS.get(key), label)
+                       for key, label, _icon in regs.GROUP_ORDER},
         "gearTypes": ctx.gear()[0],
-        # the site's own "Any Chest" / "Any Two-Handed Weapon" grouping over
+        # the site's own "Chest" / "Two-Handed Weapon" grouping over
         # those, in display order - see build_gear_categories
         "gearCategories": ctx.gear()[1],
         # the diablo-style sets, which live in a registry of their own and are

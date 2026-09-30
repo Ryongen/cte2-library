@@ -8,6 +8,7 @@ import { toHtml, toPlain, colorOf, formatNumber } from "./mcfmt.js";
 import { renderStatMod, renderExactStat, titleCase, resolveCalcs } from "./stats.js";
 import { baseStatLines, gearTypesForAffix, gearTypeName } from "./gear.js";
 import { SkillLevel, leveledValue } from "./scaling.js";
+import { t } from "./ui.js";
 
 const blank = () => ({ html: "", text: "", kind: "blank" });
 const plain = (text, kind = "line") => ({
@@ -59,14 +60,15 @@ function ticksToSeconds(ticks) {
 function rarityLabel(ctx) {
   return ctx.rarity
     ? `${ctx.rarity.name} (${ctx.rarity.pctMin}% - ${ctx.rarity.pctMax}%)`
-    : "Any rarity (full range)";
+    : t("anyRarity");
 }
 
-function tagChips(tags) {
+function tagChips(ctx, tags, families) {
   if (!tags || !tags.length) return null;
+  const names = tags.map((t) => skillTagName(ctx.lang, t, families));
   return {
-    html: tags.map((t) => `<span class="chip">${esc(titleCase(t))}</span>`).join(""),
-    text: tags.join(" "), kind: "chips",
+    html: names.map((n) => `<span class="chip">${esc(n)}</span>`).join(""),
+    text: tags.map((t, i) => `${t} ${names[i]}`).join(" "), kind: "chips",
   };
 }
 
@@ -80,7 +82,7 @@ const BUILDERS = {
     out.push(...statLines(row.stats, ctx));
     if (row.tags?.length) {
       out.push(blank());
-      out.push(plain(row.f?.reqAll ? "Needs every tag:" : "Tag Requirements:", "sub"));
+      out.push(plain((row.f?.reqAll ? t("tagReqAll") : t("tagReq")) + ":", "sub"));
       out.push({
         html: row.tags.map((t) => `<span class="chip">${esc(tagName(ctx, t))}</span>`).join("")
           + (row.excl || []).map((t) =>
@@ -95,7 +97,7 @@ const BUILDERS = {
     const fits = gearTypesForAffix(row, ctx.balance.gearTypes || {});
     out.push(blank());
     if (fits.length) {
-      out.push(plain("Can Roll On:", "sub"));
+      out.push(plain(t("canRollOn") + ":", "sub"));
       out.push({
         html: fits.map((g) =>
           `<span class="chip gear">${esc(gearTypeName(ctx.balance.gearTypes, g))}</span>`).join(""),
@@ -104,9 +106,9 @@ const BUILDERS = {
       });
       out.push(blank());
     }
-    if (row.f?.weight != null) out.push(meta("Weight", row.f.weight));
-    out.push(meta("Id", row.id));
-    if (row.f?.type) out.push(meta("Affix Type", row.f.type));
+    if (row.f?.weight != null) out.push(meta(t("weight"), row.f.weight));
+    out.push(meta(t("id"), row.id));
+    if (row.f?.type) out.push(meta(t("affixType"), affixTypeName(ctx.translated, row.f.type)));
     return out;
   },
 
@@ -135,12 +137,12 @@ const BUILDERS = {
     // everything the item's footer says - so it sits here and not at the end
     out.push(...setLines(row, ctx));
     out.push(blank());
-    if (gear?.slotName) out.push(meta("Slot", gear.slotName));
-    if (row.f?.minLvl) out.push(meta("Min Level", row.f.minLvl));
-    if (row.f?.minTier) out.push(meta("Min Map Tier", row.f.minTier));
-    if (row.f?.league) out.push(meta("League", titleCase(row.f.league)));
-    if (row.f?.weight != null) out.push(meta("Weight", row.f.weight));
-    out.push(meta("Id", row.id));
+    if (gear?.slotName) out.push(meta(t("slot"), gear.slotName));
+    if (row.f?.minLvl) out.push(meta(t("minDropLevel"), row.f.minLvl));
+    if (row.f?.minTier) out.push(meta(t("minMapTier"), row.f.minTier));
+    if (row.f?.league) out.push(meta(t("league"), titleCase(row.f.league)));
+    if (row.f?.weight != null) out.push(meta(t("weight"), row.f.weight));
+    out.push(meta(t("id"), row.id));
     return out;
   },
 
@@ -148,7 +150,8 @@ const BUILDERS = {
     const out = [title(row.name, "#ffff55")];
     out.push(blank());
     if (row.slots?.length) {
-      out.push(plain("On Slots: " + row.slots.map(titleCase).join(", ")));
+      out.push(plain(t("onSlots") + ": "
+        + row.slots.map((id) => gearSlotName(ctx.lang, id)).join(", ")));
     }
     out.push(blank());
     if (row.runes?.length) {
@@ -158,23 +161,23 @@ const BUILDERS = {
       });
     }
     out.push(blank());
-    out.push(plain("Stats:"));
+    out.push(plain(t("stats") + ":"));
     out.push(...statLines(row.stats, ctx));
     out.push(blank());
-    out.push(meta("Id", row.id));
+    out.push(meta(t("id"), row.id));
     return out;
   },
 
   rune: socketable,
   gem: socketable,
 
-  supp_gem(row, ctx) { return skillGem(row, ctx, "Support Gem"); },
-  aura(row, ctx) { return skillGem(row, ctx, "Augment"); },
+  supp_gem(row, ctx) { return skillGem(row, ctx, t("supportGem")); },
+  aura(row, ctx) { return skillGem(row, ctx, t("augment")); },
 
   effect(row, ctx) {
     const color = row.f?.type === "negative" ? "#ff5555" : "#55ff55";
     const out = [title(row.name, color)];
-    const chips = tagChips(row.tags);
+    const chips = tagChips(ctx, row.tags, ["effect", "spell"]);
     if (chips) out.push(chips);
     out.push(blank());
     out.push(...statLines(row.stats, ctx));
@@ -182,13 +185,16 @@ const BUILDERS = {
     // entry that is, since the stat's sentence is prose and not a link
     if (row.procs?.length) {
       out.push(blank());
-      out.push(plain("Triggers: "
+      out.push(plain(t("triggers") + ": "
         + row.procs.map((id) => spellName(ctx, id)).join(", "), "sub"));
     }
     out.push(blank());
-    if (row.f?.maxStacks > 1) out.push(meta("Max Stacks", row.f.maxStacks));
-    if (row.f?.type) out.push(meta("Type", titleCase(row.f.type)));
-    out.push(meta("Id", row.id));
+    if (row.f?.maxStacks > 1) out.push(meta(t("maxStacks"), row.f.maxStacks));
+    if (row.f?.type) {
+      const key = "eff_" + row.f.type;
+      out.push(meta(t("type"), t(key) === key ? titleCase(row.f.type) : t(key)));
+    }
+    out.push(meta(t("id"), row.id));
     return out;
   },
 
@@ -200,7 +206,7 @@ const BUILDERS = {
     const out = [title(row.name, "#ff5555")];
     out.push(blank());
     if (row.desc) {
-      const resolved = resolveCalcs(row.desc, ctx.lvl, ctx.scaling, ctx.balance, skill);
+      const resolved = resolveCalcs(row.desc, ctx.lvl, ctx.scaling, ctx.balance, skill, ctx.lang);
       for (const part of resolved.split("[LINE]")) {
         if (part.trim()) out.push({
           html: toHtml("§7" + part.trim()), text: toPlain(part), kind: "desc",
@@ -216,27 +222,27 @@ const BUILDERS = {
     const multi = ctx.scaling.manaCostMulti(ctx.lvl);
     const mana = Math.trunc(multi * leveledValue(c.manaMin, c.manaMax, skill.lvl, skill.maxLvl));
     const ene = Math.trunc(multi * leveledValue(c.eneMin, c.eneMax, skill.lvl, skill.maxLvl));
-    if (mana > 0) out.push(costLine("Mana Cost", mana, "#5555ff"));
-    if (ene > 0) out.push(costLine("Energy Cost", ene, "#55ff55"));
+    if (mana > 0) out.push(costLine(t("manaCost"), mana, "#5555ff"));
+    if (ene > 0) out.push(costLine(t("eneCost"), ene, "#55ff55"));
     // a Blood Mage pays both costs out of one blood pool. Worth a line only
     // when there are two of them - on a skill with a single cost it would just
     // repeat the number above it
     if (mana > 0 && ene > 0) {
-      out.push(costLine("Blood Cost (Blood Mage)", mana + ene, "#aa0000"));
+      out.push(costLine(`${t("bloodCost")} (${t("bloodMage")})`, mana + ene, "#aa0000"));
     }
     if (c.charges > 0) {
-      out.push(meta("Max Charges", c.charges));
-      if (c.chargeRegen) out.push(meta("Charge Regen", ticksToSeconds(c.chargeRegen)));
+      out.push(meta(t("maxCharges"), c.charges));
+      if (c.chargeRegen) out.push(meta(t("chargeRegen"), ticksToSeconds(c.chargeRegen)));
     } else if (c.cooldown > c.recovery) {
-      out.push(meta("Cooldown", ticksToSeconds(c.cooldown)));
+      out.push(meta(t("cooldown"), ticksToSeconds(c.cooldown)));
     }
-    out.push(meta("Recovery", ticksToSeconds(c.recovery)));
+    out.push(meta(t("recovery"), ticksToSeconds(c.recovery)));
     if (c.channel) {
-      out.push(meta("Channel Pulse", ticksToSeconds(c.castTime)));
+      out.push(meta(t("channelPulse"), ticksToSeconds(c.castTime)));
     } else if (c.castTime <= 1) {
-      out.push(meta("Cast Time", "Instant"));
+      out.push(meta(t("castTime"), t("instant")));
     } else {
-      out.push(meta("Cast Time", ticksToSeconds(c.castTime)));
+      out.push(meta(t("castTime"), ticksToSeconds(c.castTime)));
     }
     // ProcSpellEffect keeps a triggered cast on its own cooldown key, read
     // straight off the config - neither Cast Speed nor Cooldown Reduction
@@ -245,22 +251,23 @@ const BUILDERS = {
     // anything can proc this skill rather than printing the number on all
     // 309 the way the mod's shift tooltip does.
     if (row.f?.proccable) {
-      out.push(meta("Proc Recharge",
-        c.procCd > 0 ? ticksToSeconds(c.procCd) : "no limit"));
+      out.push(meta(t("procRecharge"),
+        c.procCd > 0 ? ticksToSeconds(c.procCd) : t("noLimit")));
     }
     out.push(...effectLines(row, ctx, skill));
     if (row.stats?.length) {
       out.push(blank());
-      out.push(plain(`Gem Stats at Level ${skill.lvl}:`, "sub"));
+      out.push(plain(t("gemStatsAt", { n: skill.lvl }) + ":", "sub"));
       out.push(...exactStatLines(row.stats, skill.pct, ctx));
     }
-    const chips = tagChips(row.tags);
+    const chips = tagChips(ctx, row.tags, ["spell", "effect"]);
     if (chips) { out.push(blank()); out.push(chips); }
     out.push(blank());
-    if (c.weapon) out.push(meta("Weapon", titleCase(c.weapon)));
-    if (row.f?.minLvl) out.push(meta("Requires Level", row.f.minLvl));
-    out.push(meta("Max Gem Level", `${skill.natural} (${skill.maxLvl} with gear)`));
-    out.push(meta("Id", row.id));
+    if (c.weapon) out.push(meta(t("weapon"), weaponName(ctx, c.weapon)));
+    if (row.f?.minLvl) out.push(meta(t("requiresLevel"), row.f.minLvl));
+    out.push(meta(t("maxGemLevel"),
+      `${skill.natural} (${t("withGear", { n: skill.maxLvl })})`));
+    out.push(meta(t("id"), row.id));
     out.push(...procLines(row, ctx));
     return out;
   },
@@ -271,19 +278,19 @@ const BUILDERS = {
     out.push(blank());
     for (const m of row.mods || []) out.push(plain(modLabel(ctx, m)));
     if (row.modsOneOf?.length) {
-      out.push(plain("One of:"));
+      out.push(plain(t("oneOf") + ":"));
       for (const m of row.modsOneOf) out.push(plain("  " + modLabel(ctx, m)));
     }
     if (row.req?.length) {
       out.push(blank());
-      out.push(plain("Requires:"));
+      out.push(plain(t("requires") + ":"));
       for (const r of row.req) out.push(plain("  " + reqLabel(ctx, r)));
     }
     out.push(blank());
-    if (row.f?.potentialCost) out.push(meta("Potential Cost", row.f.potentialCost));
-    if (row.f?.rarity) out.push(meta("Rarity", titleCase(row.f.rarity)));
-    if (row.f?.weight != null) out.push(meta("Weight", row.f.weight));
-    out.push(meta("Id", row.id));
+    if (row.f?.potentialCost) out.push(meta(t("potentialCost"), row.f.potentialCost));
+    if (row.f?.rarity) out.push(meta(t("rarity"), rarity?.name || titleCase(row.f.rarity)));
+    if (row.f?.weight != null) out.push(meta(t("weight"), row.f.weight));
+    out.push(meta(t("id"), row.id));
     return out;
   },
 
@@ -291,29 +298,33 @@ const BUILDERS = {
   prof(row) {
     const out = [title(row.f?.profession || row.name, "#55ff55")];
     out.push(blank());
-    out.push(meta("Exp", row.f?.exp ?? 0));
-    out.push(meta("Tier", row.f?.tier ?? 0));
-    if (row.f?.type) out.push(meta("Source", titleCase(row.f.type)));
+    out.push(meta(t("exp"), row.f?.exp ?? 0));
+    out.push(meta(t("tier"), row.f?.tier ?? 0));
+    if (row.f?.type) out.push(meta(t("source"), titleCase(row.f.type)));
     if (row.req?.length) {
-      out.push(meta("Requires", row.req.map(titleCase).join(", ")));
+      out.push(meta(t("requires"), row.req.map(titleCase).join(", ")));
     }
     out.push(blank());
-    out.push(meta("Id", row.id));
+    out.push(meta(t("id"), row.id));
     return out;
   },
 };
+
+// BaseGemItem / RuneItem head each stat block with these (the extractor
+// bakes the English label; ui.js knows the game's key for each)
+const SOCKET_LABELS = { Weapons: "sockWeapon", Armor: "sockArmor", Jewelry: "sockJewelry" };
 
 function socketable(row, ctx) {
   const out = [title(row.name, "#55ffff")];
   out.push(blank());
   for (const set of row.sets || []) {
-    out.push(plain(set.label + ":", "sub"));
+    out.push(plain((t(SOCKET_LABELS[set.label]) || set.label) + ":", "sub"));
     out.push(...statLines(set.stats, ctx));
   }
   out.push(blank());
-  if (row.f?.tier != null) out.push(meta("Tier", row.f.tier));
-  if (row.f?.weight != null) out.push(meta("Weight", row.f.weight));
-  out.push(meta("Id", row.id));
+  if (row.f?.tier != null) out.push(meta(t("tier"), row.f.tier));
+  if (row.f?.weight != null) out.push(meta(t("weight"), row.f.weight));
+  out.push(meta(t("id"), row.id));
   return out;
 }
 
@@ -323,14 +334,14 @@ function skillGem(row, ctx, kind) {
   out.push(blank());
   out.push(...statLines(row.stats, ctx));
   out.push(blank());
-  if (row.f?.style) out.push(meta("Style", row.f.style));
-  if (row.f?.minLvl) out.push(meta("Min Level", row.f.minLvl));
-  if (row.f?.manaMulti) out.push(meta("Mana Multiplier", `${row.f.manaMulti}x`));
+  if (row.f?.style) out.push(meta(t("style"), row.f.style));
+  if (row.f?.minLvl) out.push(meta(t("minLevel"), row.f.minLvl));
+  if (row.f?.manaMulti) out.push(meta(t("manaMulti"), `${row.f.manaMulti}x`));
   if (row.f?.reservation) {
-    out.push(meta("Reservation", `${Math.round(row.f.reservation * 100)}%`));
+    out.push(meta(t("reservation"), `${Math.round(row.f.reservation * 100)}%`));
   }
-  if (row.f?.weight != null) out.push(meta("Weight", row.f.weight));
-  out.push(meta("Id", row.id));
+  if (row.f?.weight != null) out.push(meta(t("weight"), row.f.weight));
+  out.push(meta(t("id"), row.id));
   return out;
 }
 
@@ -346,18 +357,18 @@ function costLine(label, value, color) {
 function skillLevelLine(row, skill, ctx) {
   let value = `${skill.lvl} / ${skill.natural}`;
   if (skill.lvl > skill.natural) {
-    value = `${skill.lvl} / ${skill.natural} (+${skill.lvl - skill.natural} from gear)`;
+    value = `${skill.lvl} / ${skill.natural} (${t("fromGear", { n: skill.lvl - skill.natural })})`;
   }
   // Spell.getLevelOf hands the question to another skill when lvl_based_on_spell
   // is set - this one has no rank of its own to raise
   if (row.f?.lvlFrom) {
     const from = toPlain(ctx.lang["mmorpg.spell." + row.f.lvlFrom])
       || titleCase(row.f.lvlFrom);
-    value += ` · ranked by ${from}`;
+    value += ` · ${t("rankedBy", { name: from })}`;
   }
   return {
-    html: `<span class="k skill-lvl">Skill Level</span><span class="v">${esc(value)}</span>`,
-    text: `Skill Level ${value}`, kind: "meta",
+    html: `<span class="k skill-lvl">${esc(t("skillLevel"))}</span><span class="v">${esc(value)}</span>`,
+    text: `${t("skillLevel")} ${value}`, kind: "meta",
   };
 }
 
@@ -376,7 +387,7 @@ function effectLines(row, ctx, skill) {
   const applied = row.effects || [];
   if (!applied.length || !ctx.effects) return [];
   const out = [];
-  for (const group of [["give", "Applies:"], ["take", "Removes:"]]) {
+  for (const group of [["give", t("applies") + ":"], ["take", t("removes") + ":"]]) {
     const [act, label] = group;
     const some = applied.filter((e) => e.act === act && ctx.effects.get(e.id));
     if (!some.length) continue;
@@ -392,16 +403,16 @@ function effectEntry(ref, ctx, skill, act) {
   const color = effect.f?.type === "negative" ? "#ff5555" : "#55ff55";
   const notes = [];
   if (act === "give") {
-    notes.push(ref.self ? "on self" : "on target");
+    notes.push(ref.self ? t("onSelf") : t("onTarget"));
     if (ref.dur > 0) notes.push(ticksToSeconds(ref.dur));
-    else if (ref.dur < 0) notes.push("permanent");
-    if (ref.count > 1) notes.push(`${ref.count} stacks`);
-    if (effect.f?.maxStacks > 1) notes.push(`stacks to ${effect.f.maxStacks}`);
+    else if (ref.dur < 0) notes.push(t("permanent"));
+    if (ref.count > 1) notes.push(t("nStacks", { n: ref.count }));
+    if (effect.f?.maxStacks > 1) notes.push(t("stacksTo", { n: effect.f.maxStacks }));
   } else {
-    notes.push(ref.all ? "all stacks"
-      : ref.count > 1 ? `${ref.count} stacks` : "1 stack");
+    notes.push(ref.all ? t("allStacks")
+      : ref.count > 1 ? t("nStacks", { n: ref.count }) : t("oneStack"));
   }
-  if (ref.chance != null) notes.push(`${Math.round(ref.chance)}% chance`);
+  if (ref.chance != null) notes.push(t("chance", { n: Math.round(ref.chance) }));
 
   const head = {
     html: `<span class="eff-name" style="color:${color}">${esc(effect.name)}</span>`
@@ -435,8 +446,8 @@ function setLines(row, ctx) {
   const size = set.uniques.length;
   const out = [blank(), {
     html: `<span class="eff-name set-name">${esc(set.name)}</span>`
-      + `<span class="eff-note">set · ${size} pieces</span>`,
-    text: `${set.name} set ${size} pieces`, kind: "eff set",
+      + `<span class="eff-note">${esc(t("setPieces", { n: size }))}</span>`,
+    text: `${set.name} ${t("setPieces", { n: size })}`, kind: "eff set",
   }];
   for (const id of set.uniques) {
     const piece = ctx.uniques?.get(id);
@@ -447,10 +458,10 @@ function setLines(row, ctx) {
     out.push({
       html: here || !piece
         ? `<span class="set-piece here">${esc(name)}</span>`
-          + (here ? `<span class="eff-note">this item</span>` : "")
+          + (here ? `<span class="eff-note">${esc(t("thisItem"))}</span>` : "")
         : `<button type="button" class="set-piece proc-link" `
           + `data-entry="${esc(id)}">${esc(name)}</button>`,
-      text: here ? `${name} this item` : name, kind: "set-piece",
+      text: here ? `${name} ${t("thisItem")}` : name, kind: "set-piece",
     });
   }
   // cumulative: every tier at or below what you wear applies, so a 4-piece
@@ -525,7 +536,7 @@ function procLines(row, ctx) {
     }
   }
   if (!found.length) return [];
-  const out = [blank(), plain("Triggers:", "sub")];
+  const out = [blank(), plain(t("triggers") + ":", "sub")];
   for (const { spell, via } of found) out.push(...procEntry(spell, via, ctx));
   return out;
 }
@@ -534,9 +545,9 @@ function procEntry(spell, via, ctx) {
   const rank = skillLevelFor(spell, ctx);
   const cd = spell.cfg?.procCd ?? 0;
   const notes = [];
-  if (via) notes.push("via " + via);
-  notes.push(`Skill Level ${rank.lvl}`);
-  notes.push(cd > 0 ? `every ${ticksToSeconds(cd)}` : "no proc cooldown");
+  if (via) notes.push(t("via", { name: via }));
+  notes.push(`${t("skillLevel")} ${rank.lvl}`);
+  notes.push(cd > 0 ? t("every", { t: ticksToSeconds(cd) }) : t("noProcCd"));
 
   const out = [{
     html: `<button type="button" class="eff-name proc-link" `
@@ -545,7 +556,7 @@ function procEntry(spell, via, ctx) {
     text: `${spell.name} ${notes.join(" ")}`, kind: "eff proc",
   }];
   if (spell.desc) {
-    const resolved = resolveCalcs(spell.desc, ctx.lvl, ctx.scaling, ctx.balance, rank);
+    const resolved = resolveCalcs(spell.desc, ctx.lvl, ctx.scaling, ctx.balance, rank, ctx.lang);
     for (const part of resolved.split("[LINE]")) {
       if (part.trim()) {
         out.push({
@@ -570,6 +581,57 @@ function tagName(ctx, id) {
   return toPlain(ctx.lang["mmorpg.tag.gear_slot." + id]) || titleCase(id);
 }
 
+/**
+ * A skill or effect tag's display name: ModTag's `mmorpg.tag.<type>.<id>`.
+ *
+ * The same lang file names the talent tree's stats, so reading the key keeps
+ * "Area" on a chip and "Area Damage" on a talent in the same words. An effect
+ * row carries both families (`aura` is a spell tag, `positive` an effect one),
+ * hence the ordered list.
+ */
+export function skillTagName(lang, id, families = ["spell", "effect"]) {
+  for (const fam of families) {
+    const text = toPlain(lang[`mmorpg.tag.${fam}.${id}`] || "");
+    if (text) return text;
+  }
+  return titleCase(id);
+}
+
+// SpellConfiguration.weapon: three of these are gear-slot tags the game names,
+// the other two are the table's
+const WEAPON_TAGS = {
+  MELEE_WEAPON: "melee_weapon", MAGE_WEAPON: "mage_weapon", RANGED: "ranged_weapon",
+};
+const WEAPON_WORDS = { ANY_WEAPON: "anyWeapon", NON_MAGE_WEAPON: "nonMageWeapon" };
+
+function weaponName(ctx, id) {
+  if (WEAPON_WORDS[id]) return t(WEAPON_WORDS[id]);
+  return toPlain(ctx.lang["mmorpg.tag.gear_slot." + WEAPON_TAGS[id]] || "")
+    || titleCase(id.toLowerCase());
+}
+
+/** A gear slot's display name: GearSlot's `mmorpg.gearslot.<id>`. */
+export function gearSlotName(lang, id) {
+  return toPlain(lang["mmorpg.gearslot." + id] || "") || titleCase(id);
+}
+
+/**
+ * An affix type, in the picked language when the game has the word.
+ *
+ * The in-game filter prints the raw enum name (AffixTypeFilter: "todo loc"),
+ * so English stays as it is. Only these have a Words entry to borrow; the
+ * rest have none in any language.
+ */
+const AFFIX_TYPE_KEYS = {
+  prefix: "mmorpg.word.prefix", suffix: "mmorpg.word.suffix",
+  jewel: "mmorpg.word.jewel", tool: "mmorpg.word.tool",
+};
+
+export function affixTypeName(translated, type) {
+  const key = AFFIX_TYPE_KEYS[type];
+  return (key && toPlain(translated?.[key] || "")) || type;
+}
+
 function modLabel(ctx, id) {
   return toPlain(ctx.lang["library_of_exile.item_modification." + id]) || titleCase(id);
 }
@@ -581,7 +643,7 @@ function reqLabel(ctx, id) {
 /** Build the tooltip lines for a row. Falls back to name + id. */
 export function buildTooltip(groupKey, row, ctx) {
   const builder = BUILDERS[groupKey];
-  if (!builder) return [title(row.name), meta("Id", row.id)];
+  if (!builder) return [title(row.name), meta(t("id"), row.id)];
   return builder(row, ctx).filter(Boolean);
 }
 
