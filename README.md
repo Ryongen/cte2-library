@@ -78,3 +78,11 @@ python tools/extract.py --instance "<launcher>/instances/<instance>/minecraft"
 It reads the mod jars and the pack overrides from that one folder, picks the
 version up from the launcher's own config, and writes `data/<version>/`. Python
 3, standard library only - nothing to install.
+
+## Thanks
+
+Oficial translations partly come from MnS mod.
+
+Russian translation thanks to Alfanok in discord.
+
+Korean translation thanks to https://moru.gg/ko/modpack/craft-to-exile-2 
