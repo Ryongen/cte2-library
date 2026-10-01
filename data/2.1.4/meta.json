@@ -7,7 +7,7 @@
   "ancient_obelisks": "1.2.8",
   "mmorpg": "6.4.13"
  },
- "generated": "2026-09-30T01:26:40Z",
+ "generated": "2026-10-01T20:46:13Z",
  "maxLevel": 100,
  "counts": {
   "currency": 86,
@@ -43,7 +43,7 @@
   {
    "id": "ja_jp",
    "name": "日本語",
-   "coverage": 31,
+   "coverage": 89,
    "aliases": []
   },
   {
