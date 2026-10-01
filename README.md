@@ -86,3 +86,5 @@ Oficial translations partly come from MnS mod.
 Russian translation thanks to Alfanok in discord.
 
 Korean translation thanks to https://moru.gg/ko/modpack/craft-to-exile-2 
+
+Japanese translation thanks to pazakasin (https://github.com/pazakasin/CraftToExile2-Japanese)
