@@ -11,6 +11,8 @@ draws them.
 Built from the pack's own files - the mods plus CTE2's datapack overrides - so
 the names and numbers match what you actually see in game.
 
+The website now counts how many people use it each day.
+
 ## Quick start
 
 Pick a category on the left, click an entry, read its tooltip on the right.

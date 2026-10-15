@@ -13,6 +13,7 @@ import {
 import { titleCase } from "./stats.js";
 import { indexAffixGear, gearTypeName } from "./gear.js";
 import { t, setUiLocale, applyUi } from "./ui.js";
+import { countUsage, countVisit } from "./usage.js";
 
 const GROUPS = [
   ["currency", "Currency", "currency"],
@@ -91,6 +92,7 @@ const $ = (sel) => document.querySelector(sel);
 // ------------------------------------------------------------------ boot
 
 async function boot() {
+  countVisit();
   state.versions = await loadVersions();
   if (!state.versions.length) {
     $("#list").innerHTML = '<p class="empty">No data yet. Run tools/extract.py.</p>';
@@ -435,7 +437,9 @@ function renderTooltip() {
 function wireControls() {
   $("#rail").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-group]");
-    if (btn) selectGroup(btn.dataset.group);
+    if (!btn) return;
+    countUsage(`group-${btn.dataset.group}`);
+    selectGroup(btn.dataset.group);
   });
 
   $("#list").addEventListener("click", (e) => {
@@ -472,6 +476,7 @@ function wireControls() {
   });
 
   $("#search").addEventListener("input", (e) => {
+    countUsage("search");
     state.search = e.target.value.trim();
     applyFilter();
   });
