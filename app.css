@@ -276,10 +276,18 @@ nav#rail {
 
 /* ------------------------------------------------------------------ narrow */
 
+/* A phone cannot hold the page in one viewport: the header and filters alone
+   fill most of it, and a fixed-height grid then squeezed the list to nothing
+   and let the filters spill under the tooltip. So the page scrolls as a whole,
+   the list keeps a scroll box of its own, and the tooltip sits below at its
+   full height. */
 @media (max-width: 900px) {
-  main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  body { height: auto; min-height: 100vh; }
+  main { display: flex; flex-direction: column; }
   nav#rail { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .grp { width: auto; white-space: nowrap; }
   .grp .n { display: none; }
-  .tip { border-top: 1px solid var(--line); max-height: 45vh; }
+  .mid { border-right: 0; }
+  .list { max-height: 55vh; }
+  .tip { border-top: 1px solid var(--line); overflow: visible; }
 }

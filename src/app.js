@@ -403,19 +403,28 @@ function tooltipFor(row) {
   return entry;
 }
 
-function select(row, { scroll = false } = {}) {
+const NARROW = window.matchMedia("(max-width: 900px)");
+
+function select(row, { scroll = false, reveal = false } = {}) {
   state.selected = row;
   renderList();
   renderSkillLevel();
   renderTooltip();
   if (scroll) {
-    // a deep-linked entry can be thousands of rows down; put it on screen
+    // a deep-linked entry can be thousands of rows down; put it on screen.
+    // Scrolls the list box alone - scrollIntoView would drag the whole page
+    // along on a phone, where the page itself scrolls.
+    const list = $("#list");
     const i = state.filtered.indexOf(row);
-    if (i >= 0) {
-      $("#list").querySelector(`[data-i="${i}"]`)
-        ?.scrollIntoView({ block: "center" });
+    const el = i >= 0 && list.querySelector(`[data-i="${i}"]`);
+    if (el) {
+      const box = list.getBoundingClientRect();
+      const at = el.getBoundingClientRect();
+      list.scrollTop += at.top - box.top - (list.clientHeight - at.height) / 2;
     }
   }
+  // on a phone the tooltip is below the list, off screen; a tap should show it
+  if (reveal && NARROW.matches) $("#tip").scrollIntoView({ block: "start" });
   syncUrl();
 }
 
@@ -444,7 +453,7 @@ function wireControls() {
 
   $("#list").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-i]");
-    if (btn) select(state.filtered[Number(btn.dataset.i)]);
+    if (btn) select(state.filtered[Number(btn.dataset.i)], { reveal: true });
   });
 
   // an entry the tooltip names - the skill this one triggers, the other pieces
@@ -454,7 +463,7 @@ function wireControls() {
     const btn = e.target.closest("[data-entry]");
     if (!btn) return;
     const row = state.rows.find((r) => r.id === btn.dataset.entry);
-    if (row) select(row, { scroll: true });
+    if (row) select(row, { scroll: true, reveal: true });
   });
 
   $("#filters").addEventListener("change", (e) => {
